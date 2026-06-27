@@ -1,6 +1,8 @@
 """Health dashboard router for Hermes MCP Admin.
 
-Returns dual health data checking both Gateway and Dashboard APIs.
+Returns dual health data checking both Gateway and Dashboard APIs,
+plus summary counts for the Dashboard cards (model, tools, skills,
+sessions, mcp_servers).
 
 Endpoints:
     GET /api/health - Dashboard health data with dual health checks
@@ -72,7 +74,10 @@ async def _dashboard_login(dashboard_url: str, username: str, password: str) -> 
 
 
 async def _check_dashboard(dashboard_url: str, username: str, password: str) -> dict[str, Any]:
-    """Check Hermes Dashboard health via cookie-based auth."""
+    """Check Hermes Dashboard health via cookie-based auth.
+
+    Returns both health status and the /api/status data for reuse.
+    """
     if not dashboard_url:
         return {"healthy": False, "url": "", "error": "Not configured"}
     try:
@@ -85,7 +90,13 @@ async def _check_dashboard(dashboard_url: str, username: str, password: str) -> 
                 headers={"Cookie": f'hermes_session_at="{cookie}"'},
             )
             resp.raise_for_status()
-            return {"healthy": True, "url": dashboard_url, "status_code": resp.status_code}
+            status_data = resp.json() if resp.status_code == 200 else {}
+            return {
+                "healthy": True,
+                "url": dashboard_url,
+                "status_code": resp.status_code,
+                "_status": status_data,  # carry status data for reuse
+            }
     except httpx.ConnectError:
         return {"healthy": False, "url": dashboard_url, "error": "Connection refused"}
     except httpx.TimeoutException:
@@ -94,26 +105,6 @@ async def _check_dashboard(dashboard_url: str, username: str, password: str) -> 
         return {"healthy": False, "url": dashboard_url, "error": f"HTTP {exc.response.status_code}"}
     except Exception as exc:
         return {"healthy": False, "url": dashboard_url, "error": str(exc)}
-
-
-async def _get_hermes_version(gateway_url: str, api_key: str) -> str | None:
-    """Get Hermes version from Gateway /v1/capabilities."""
-    if not gateway_url:
-        return None
-    url = f"{gateway_url.rstrip('/')}/v1/capabilities"
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code == 200:
-                body = resp.json()
-                if isinstance(body, dict):
-                    return body.get("version")
-    except Exception as exc:
-        logger.debug("Failed to get Hermes version: %s", exc)
-    return None
 
 
 @router.get("")
@@ -142,23 +133,26 @@ async def get_health() -> dict[str, Any]:
     # Gateway health
     gateway_health = await _check_gateway(gateway_url, gateway_key)
 
-    # Dashboard health
+    # Dashboard health (includes /api/status data)
     dashboard_health = await _check_dashboard(dashboard_url, dashboard_user, dashboard_pw)
 
-    # Hermes version from Gateway
-    hermes_version = await _get_hermes_version(gateway_url, gateway_key)
+    # Extract /api/status data if available
+    status_data = dashboard_health.pop("_status", {}) if dashboard_health.get("healthy") else {}
+
+    # Version from /api/status
+    hermes_version = status_data.get("version") if isinstance(status_data, dict) else None
 
     gw_healthy = gateway_health.get("healthy", False)
     db_healthy = dashboard_health.get("healthy", False)
 
-    if mcp_running and gw_healthy and db_healthy:
+    if gw_healthy and db_healthy:
         overall = "ok"
-    elif mcp_running or gw_healthy or db_healthy:
+    elif gw_healthy or db_healthy:
         overall = "degraded"
     else:
         overall = "error"
 
-    # Fetch summary data from Dashboard if healthy
+    # Summary data from Dashboard
     model_info: dict[str, Any] = {}
     tools_info: dict[str, Any] = {}
     skills_info: dict[str, Any] = {}
@@ -171,56 +165,95 @@ async def get_health() -> dict[str, Any]:
             if cookie:
                 headers = {"Cookie": f'hermes_session_at="{cookie}"'}
                 async with httpx.AsyncClient(timeout=10.0) as client:
-                    # Config (model + toolsets info)
+                    # /api/config → model, toolsets, lsp servers
                     try:
-                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/config", headers=headers)
+                        r = await client.get(
+                            f"{dashboard_url.rstrip('/')}/api/config", headers=headers,
+                        )
                         if r.status_code == 200:
                             cfg = r.json()
                             if isinstance(cfg, dict):
-                                # Model info
+                                # Model: may be a string or empty
                                 model_val = cfg.get("model", "")
+                                model_name = str(model_val) if model_val else "Default"
+                                # Provider: try providers dict, fallback to model name
                                 providers_cfg = cfg.get("providers", {})
                                 provider = ""
-                                if isinstance(providers_cfg, dict):
-                                    for p in providers_cfg:
-                                        provider = p
-                                        break
+                                if isinstance(providers_cfg, dict) and providers_cfg:
+                                    provider = next(iter(providers_cfg))
+                                elif model_name.startswith("MiniMax"):
+                                    provider = "minimax"
+                                elif model_name.startswith("gpt"):
+                                    provider = "openai"
+                                elif model_name.startswith("claude"):
+                                    provider = "anthropic"
                                 model_info = {
-                                    "provider": provider,
-                                    "name": str(model_val) if model_val else "N/A",
+                                    "provider": provider or "auto",
+                                    "name": model_name,
                                 }
-                                # Toolsets
+                                # Toolsets count
                                 toolsets = cfg.get("toolsets", [])
                                 if isinstance(toolsets, list):
-                                    tools_info = {"enabled": len(toolsets), "total": len(toolsets)}
+                                    tools_info = {
+                                        "enabled": len(toolsets),
+                                        "total": len(toolsets),
+                                    }
+                                # MCP servers from lsp.servers
+                                lsp = cfg.get("lsp", {})
+                                if isinstance(lsp, dict):
+                                    servers = lsp.get("servers", {})
+                                    if isinstance(servers, dict):
+                                        mcp_servers_info = {"count": len(servers)}
                     except Exception:
                         pass
 
-                    # Skills
+                    # /api/skills
                     try:
-                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/skills", headers=headers)
+                        r = await client.get(
+                            f"{dashboard_url.rstrip('/')}/api/skills", headers=headers,
+                        )
                         if r.status_code == 200:
                             sdata = r.json()
                             if isinstance(sdata, list):
-                                enabled = sum(1 for s in sdata if isinstance(s, dict) and s.get("enabled", True))
-                                skills_info = {"enabled": enabled, "total": len(sdata)}
+                                enabled = sum(
+                                    1
+                                    for s in sdata
+                                    if isinstance(s, dict) and s.get("enabled", True)
+                                )
+                                skills_info = {
+                                    "enabled": enabled,
+                                    "total": len(sdata),
+                                }
                     except Exception:
                         pass
 
-                    # Sessions
+                    # Sessions: use active_sessions from status, total from /api/sessions
+                    active = (
+                        status_data.get("active_sessions", 0)
+                        if isinstance(status_data, dict)
+                        else 0
+                    )
                     try:
-                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/sessions", headers=headers)
+                        r = await client.get(
+                            f"{dashboard_url.rstrip('/')}/api/sessions",
+                            headers=headers,
+                        )
                         if r.status_code == 200:
                             sess = r.json()
                             if isinstance(sess, dict):
                                 sessions_info = {
-                                    "active": sess.get("total", 0),
+                                    "active": active,
+                                    "total": sess.get("total", 0),
                                     "recent": sess.get("sessions", [])[:5],
                                 }
                             elif isinstance(sess, list):
-                                sessions_info = {"active": len(sess), "recent": sess[:5]}
+                                sessions_info = {
+                                    "active": active,
+                                    "total": len(sess),
+                                    "recent": sess[:5],
+                                }
                     except Exception:
-                        pass
+                        sessions_info = {"active": active}
         except Exception as exc:
             logger.debug("Failed to get Dashboard summary: %s", exc)
 

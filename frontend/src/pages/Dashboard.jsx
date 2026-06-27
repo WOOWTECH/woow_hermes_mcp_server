@@ -159,9 +159,9 @@ export default function Dashboard() {
         />
         <StatusCard
           title="Sessions"
-          status={sessions.active != null ? 'green' : 'gray'}
+          status={sessions.active != null || sessions.total != null ? 'green' : 'gray'}
           value={sessions.active != null ? String(sessions.active) : 'N/A'}
-          subtitle="Active agent sessions"
+          subtitle={sessions.total != null ? `${sessions.total} total sessions` : 'Active agent sessions'}
           icon={MessageSquare}
         />
       </div>
