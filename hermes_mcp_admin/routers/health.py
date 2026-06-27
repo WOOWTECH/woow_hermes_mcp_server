@@ -149,12 +149,79 @@ async def get_health() -> dict[str, Any]:
     else:
         overall = "error"
 
+    # Fetch summary data from Dashboard if healthy
+    model_info: dict[str, Any] = {}
+    tools_info: dict[str, Any] = {}
+    skills_info: dict[str, Any] = {}
+    mcp_servers_info: dict[str, Any] = {}
+    sessions_info: dict[str, Any] = {}
+
+    if db_healthy:
+        try:
+            cookie = await _dashboard_login(dashboard_url, dashboard_user, dashboard_pw)
+            if cookie:
+                headers = {"Cookie": f'hermes_session_at="{cookie}"'}
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    # Settings (model info)
+                    try:
+                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/settings", headers=headers)
+                        if r.status_code == 200:
+                            settings = r.json()
+                            if isinstance(settings, dict):
+                                m = settings.get("model", settings.get("llm", {}))
+                                if isinstance(m, dict):
+                                    model_info = {"provider": m.get("provider", ""), "name": m.get("model", m.get("name", ""))}
+                    except Exception:
+                        pass
+
+                    # Tools
+                    try:
+                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/tools", headers=headers)
+                        if r.status_code == 200:
+                            tdata = r.json()
+                            if isinstance(tdata, list):
+                                enabled = sum(1 for t in tdata if isinstance(t, dict) and t.get("enabled", True))
+                                tools_info = {"enabled": enabled, "total": len(tdata)}
+                    except Exception:
+                        pass
+
+                    # Skills
+                    try:
+                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/skills", headers=headers)
+                        if r.status_code == 200:
+                            sdata = r.json()
+                            if isinstance(sdata, list):
+                                enabled = sum(1 for s in sdata if isinstance(s, dict) and s.get("enabled", True))
+                                skills_info = {"enabled": enabled, "total": len(sdata)}
+                    except Exception:
+                        pass
+
+                    # Sessions
+                    try:
+                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/sessions", headers=headers)
+                        if r.status_code == 200:
+                            sess = r.json()
+                            if isinstance(sess, list):
+                                sessions_info = {"active": len(sess), "recent": sess[:5]}
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.debug("Failed to get Dashboard summary: %s", exc)
+
     return {
         "app_type": "hermes",
         "overall_status": overall,
         "mcp_server": mcp_server,
+        "gateway": gateway_health,
+        "dashboard": dashboard_health,
         "gateway_health": gateway_health,
         "dashboard_health": dashboard_health,
+        "model": model_info,
+        "tools": tools_info,
+        "skills": skills_info,
+        "mcp_servers": mcp_servers_info,
+        "sessions": sessions_info,
+        "hermes_version": hermes_version,
         "version": hermes_version,
-        "namespace": "podman",
+        "namespace": "hermes-mcp-admin",
     }
