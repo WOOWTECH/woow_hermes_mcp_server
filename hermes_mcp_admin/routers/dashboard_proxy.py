@@ -245,18 +245,25 @@ async def get_model() -> dict[str, Any]:
             "moa_enabled": model_val.get("moa_enabled", False),
             "moa_models": model_val.get("moa_models", []),
         }
-    # Model is a plain string - extract provider from providers config
+    # Model is a plain string - extract provider from providers config or model name
+    model_name = str(model_val) if model_val else "Default"
     providers_cfg = data.get("providers", {})
     provider_name = ""
-    if isinstance(providers_cfg, dict):
-        for pname in providers_cfg:
-            provider_name = pname
-            break
+    if isinstance(providers_cfg, dict) and providers_cfg:
+        provider_name = next(iter(providers_cfg))
+    elif model_name.startswith("MiniMax"):
+        provider_name = "minimax"
+    elif model_name.startswith("gpt"):
+        provider_name = "openai"
+    elif model_name.startswith("claude"):
+        provider_name = "anthropic"
+    else:
+        provider_name = "auto"
     moa_cfg = data.get("moa", {})
     aux_cfg = data.get("auxiliary", {})
     return {
         "provider": provider_name,
-        "model": str(model_val) if model_val else "N/A",
+        "model": model_name,
         "aux_model": aux_cfg.get("compression", "") if isinstance(aux_cfg, dict) else "",
         "moa_enabled": moa_cfg.get("active_preset", "") != "" if isinstance(moa_cfg, dict) else False,
         "moa_models": [],
