@@ -190,12 +190,25 @@ async def test_dashboard() -> ConnectionTestResult:
             message="dashboard_url is not configured",
         )
 
-    url = f"{dashboard_url.rstrip('/')}/api/config"
-
     try:
-        auth = httpx.BasicAuth(username, password) if username else None
+        # Login to get session cookie (v0.17.0 uses cookie-based auth)
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, auth=auth)
+            login_resp = await client.post(
+                f"{dashboard_url.rstrip('/')}/auth/password-login",
+                json={"provider": "basic", "username": username, "password": password},
+            )
+            login_resp.raise_for_status()
+            cookie = ""
+            for h in login_resp.headers.get_list("set-cookie"):
+                if "hermes_session_at=" in h:
+                    cookie = h.split("hermes_session_at=")[1].split(";")[0].strip('"')
+                    break
+            if not cookie:
+                return ConnectionTestResult(success=False, message="Login succeeded but no session cookie returned")
+            resp = await client.get(
+                f"{dashboard_url.rstrip('/')}/api/config",
+                headers={"Cookie": f'hermes_session_at="{cookie}"'},
+            )
             resp.raise_for_status()
             body = resp.json()
     except httpx.ConnectError as exc:

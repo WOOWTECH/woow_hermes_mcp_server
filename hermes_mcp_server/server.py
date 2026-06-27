@@ -61,15 +61,45 @@ def _gateway_client(url: str, api_key: str) -> httpx.AsyncClient:
     )
 
 
-def _dashboard_client(url: str, username: str, password: str) -> httpx.AsyncClient:
-    """Create an httpx client for the Hermes Dashboard API with Basic auth."""
-    auth = httpx.BasicAuth(username, password) if username else None
+async def _dashboard_login(url: str, username: str, password: str) -> str:
+    """Login to Hermes Dashboard and return session cookie."""
+    async with httpx.AsyncClient(base_url=url.rstrip("/"), timeout=10.0) as client:
+        resp = await client.post(
+            "/auth/password-login",
+            json={"provider": "basic", "username": username, "password": password},
+        )
+        resp.raise_for_status()
+        cookies = resp.cookies
+        token = cookies.get("hermes_session_at", "")
+        if not token:
+            for h in resp.headers.get_list("set-cookie"):
+                if "hermes_session_at=" in h:
+                    token = h.split("hermes_session_at=")[1].split(";")[0].strip('"')
+                    break
+        return token
+
+
+def _dashboard_client(url: str, cookie: str) -> httpx.AsyncClient:
+    """Create an httpx client for the Hermes Dashboard API with cookie auth."""
     return httpx.AsyncClient(
         base_url=url.rstrip("/"),
-        auth=auth,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Cookie": f'hermes_session_at="{cookie}"'},
         timeout=30.0,
     )
+
+
+# Cache for dashboard session cookie
+_dashboard_cookie_cache: dict[str, str] = {}
+
+
+async def _get_dashboard_client(conn: dict) -> httpx.AsyncClient:
+    """Get authenticated dashboard client, caching the session cookie."""
+    url = conn.get("dashboard_url", "")
+    cache_key = url
+    if cache_key not in _dashboard_cookie_cache or not _dashboard_cookie_cache[cache_key]:
+        cookie = await _dashboard_login(url, conn.get("dashboard_username", ""), conn.get("dashboard_password", ""))
+        _dashboard_cookie_cache[cache_key] = cookie
+    return _dashboard_client(url, _dashboard_cookie_cache[cache_key])
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +130,7 @@ async def hermes_inspect(profile: str = "default") -> str:
 
     # Dashboard config
     try:
-        async with _dashboard_client(conn["dashboard_url"], conn["dashboard_username"], conn["dashboard_password"]) as client:
+        async with await _get_dashboard_client(conn) as client:
             resp = await client.get("/api/config")
             resp.raise_for_status()
             result["config"] = resp.json()
@@ -109,7 +139,7 @@ async def hermes_inspect(profile: str = "default") -> str:
 
     # Model info
     try:
-        async with _dashboard_client(conn["dashboard_url"], conn["dashboard_username"], conn["dashboard_password"]) as client:
+        async with await _get_dashboard_client(conn) as client:
             resp = await client.get("/api/model/info")
             resp.raise_for_status()
             result["model_info"] = resp.json()
@@ -137,7 +167,7 @@ async def hermes_skill(
     """
     conn = _get_connection()
 
-    async with _dashboard_client(conn["dashboard_url"], conn["dashboard_username"], conn["dashboard_password"]) as client:
+    async with await _get_dashboard_client(conn) as client:
         if action == "list":
             resp = await client.get("/api/skills")
             resp.raise_for_status()
@@ -173,7 +203,7 @@ async def hermes_mcp(
     """
     conn = _get_connection()
 
-    async with _dashboard_client(conn["dashboard_url"], conn["dashboard_username"], conn["dashboard_password"]) as client:
+    async with await _get_dashboard_client(conn) as client:
         if action == "list":
             resp = await client.get("/api/mcp")
             resp.raise_for_status()
@@ -222,7 +252,7 @@ async def hermes_model(
     """
     conn = _get_connection()
 
-    async with _dashboard_client(conn["dashboard_url"], conn["dashboard_username"], conn["dashboard_password"]) as client:
+    async with await _get_dashboard_client(conn) as client:
         if action == "info":
             resp = await client.get("/api/model/info")
             resp.raise_for_status()
@@ -269,7 +299,7 @@ async def hermes_config(
     """
     conn = _get_connection()
 
-    async with _dashboard_client(conn["dashboard_url"], conn["dashboard_username"], conn["dashboard_password"]) as client:
+    async with await _get_dashboard_client(conn) as client:
         if action == "get":
             resp = await client.get("/api/config")
             resp.raise_for_status()
@@ -333,7 +363,7 @@ async def hermes_tools(
     """
     conn = _get_connection()
 
-    async with _dashboard_client(conn["dashboard_url"], conn["dashboard_username"], conn["dashboard_password"]) as client:
+    async with await _get_dashboard_client(conn) as client:
         if action == "list":
             resp = await client.get("/api/tools/toolsets")
             resp.raise_for_status()
@@ -368,7 +398,7 @@ async def hermes_gateway(
     """
     conn = _get_connection()
 
-    async with _dashboard_client(conn["dashboard_url"], conn["dashboard_username"], conn["dashboard_password"]) as client:
+    async with await _get_dashboard_client(conn) as client:
         if action == "status":
             resp = await client.get("/api/status")
             resp.raise_for_status()

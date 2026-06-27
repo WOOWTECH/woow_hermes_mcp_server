@@ -45,15 +45,36 @@ async def _check_gateway(gateway_url: str, api_key: str) -> dict[str, Any]:
         return {"healthy": False, "url": gateway_url, "error": str(exc)}
 
 
+async def _dashboard_login(dashboard_url: str, username: str, password: str) -> str:
+    """Login to Dashboard and return session cookie."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{dashboard_url.rstrip('/')}/auth/password-login",
+                json={"provider": "basic", "username": username, "password": password},
+            )
+            resp.raise_for_status()
+            for h in resp.headers.get_list("set-cookie"):
+                if "hermes_session_at=" in h:
+                    return h.split("hermes_session_at=")[1].split(";")[0].strip('"')
+            return ""
+    except Exception:
+        return ""
+
+
 async def _check_dashboard(dashboard_url: str, username: str, password: str) -> dict[str, Any]:
-    """Check Hermes Dashboard health via GET /api/status with Basic auth."""
+    """Check Hermes Dashboard health via cookie-based auth."""
     if not dashboard_url:
         return {"healthy": False, "url": "", "error": "Not configured"}
-    url = f"{dashboard_url.rstrip('/')}/api/status"
     try:
-        auth = httpx.BasicAuth(username, password) if username else None
+        cookie = await _dashboard_login(dashboard_url, username, password)
+        if not cookie:
+            return {"healthy": False, "url": dashboard_url, "error": "Login failed"}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, auth=auth)
+            resp = await client.get(
+                f"{dashboard_url.rstrip('/')}/api/status",
+                headers={"Cookie": f'hermes_session_at="{cookie}"'},
+            )
             resp.raise_for_status()
             return {"healthy": True, "url": dashboard_url, "status_code": resp.status_code}
     except httpx.ConnectError:
