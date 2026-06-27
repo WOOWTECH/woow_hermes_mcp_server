@@ -105,39 +105,39 @@
 
 ```mermaid
 graph TB
-    subgraph MCP 客戶端
+    subgraph Clients["MCP 客戶端"]
         Claude["Claude Desktop / MCP Client"]
     end
 
-    subgraph woow-hermes-mcp-server ["woow-hermes-mcp-server (K3s Pod, Port 9003)"]
+    subgraph Server["woow-hermes-mcp-server — K3s Pod :9003"]
         direction TB
-        SSE["MCP SSE 端點<br/>/private_{token}/sse"]
-        FastMCP["FastMCP Server<br/>9 個工具"]
-        AdminGUI["Web 管理介面<br/>React 19 + Vite"]
-        AdminAPI["Admin REST API<br/>FastAPI"]
-        Proxy["Dashboard 代理<br/>(/api/dashboard/*)"]
+        SSE["MCP SSE 端點"]
+        FastMCP["FastMCP Server — 9 個工具"]
+        AdminGUI["Web 管理介面 — React 19"]
+        AdminAPI["Admin REST API — FastAPI"]
+        Proxy["Dashboard 代理"]
     end
 
-    subgraph Hermes Agent ["Hermes AI Agent"]
-        GW["[A] Gateway API<br/>:8642<br/>Bearer API_SERVER_KEY"]
-        DB["[B] Dashboard REST API<br/>:9119<br/>Cookie 驗證"]
+    subgraph HermesAgent["Hermes AI Agent"]
+        GW["Gateway API :8642 — Bearer 驗證"]
+        DB["Dashboard API :9119 — Cookie 驗證"]
     end
 
-    subgraph Infra ["基礎設施"]
-        CF["Cloudflare Tunnel<br/>hermes-mcp-admin.woowtech.io"]
-        K3s["K3s Cluster<br/>hermes-mcp-admin 命名空間"]
+    subgraph Infra["基礎設施"]
+        CF["Cloudflare Tunnel"]
+        K3s["K3s Cluster"]
     end
 
     Claude -->|"Streamable HTTP"| SSE
     SSE --> FastMCP
-    FastMCP -->|"hermes_chat<br/>hermes_session<br/>hermes_inspect"| GW
-    FastMCP -->|"hermes_skill<br/>hermes_model<br/>hermes_config<br/>hermes_tools<br/>hermes_gateway<br/>hermes_mcp_server_manage"| DB
+    FastMCP -->|"Chat / Session / Inspect"| GW
+    FastMCP -->|"Skill / Model / Config / Tools"| DB
     AdminGUI --> AdminAPI
     AdminAPI --> Proxy
     Proxy --> DB
     CF --> SSE
     CF --> AdminGUI
-    K3s --> woow-hermes-mcp-server
+    K3s --> Server
 ```
 
 ### 連線架構

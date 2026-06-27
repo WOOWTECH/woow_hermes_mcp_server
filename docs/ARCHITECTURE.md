@@ -129,12 +129,12 @@ sequenceDiagram
     MCP->>DB: POST /auth/password-login
     DB-->>MCP: Set-Cookie: hermes_session_at
     MCP->>DB: GET /api/skills (Cookie auth)
-    DB-->>MCP: [{name, enabled, category}, ...]
+    DB-->>MCP: Skills list JSON array
     MCP-->>User: Formatted skills list
 
     User->>MCP: hermes_chat(message="Hello")
     MCP->>GW: POST /v1/chat/completions (Bearer auth)
-    GW-->>MCP: {choices: [{message: {content: "..."}}]}
+    GW-->>MCP: Chat completion response
     MCP-->>User: Agent response
 ```
 

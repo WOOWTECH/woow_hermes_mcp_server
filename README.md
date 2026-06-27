@@ -151,37 +151,39 @@
 
 ```mermaid
 graph TB
-    subgraph MCP Clients
-        CD[Claude Desktop]
-        CC[Claude Code]
-        N8N[n8n]
+    subgraph MCP_Clients["MCP Clients"]
+        CD["Claude Desktop"]
+        CC["Claude Code"]
+        N8N["n8n"]
     end
 
-    subgraph "Hermes MCP Admin (:9003)"
-        PROXY[MCP Reverse Proxy<br/>/private_TOKEN/sse]
-        API[FastAPI REST API<br/>/api/*]
-        SPA[React 19 SPA<br/>15 Pages]
-        MCP_SERVER[FastMCP Server<br/>9 Tools]
-        CORE[mcp_admin_core<br/>Config + Auth + Process]
+    subgraph Admin["Hermes MCP Admin :9003"]
+        PROXY["MCP Reverse Proxy"]
+        API["FastAPI REST API"]
+        SPA["React 19 SPA — 15 Pages"]
+        MCP_SERVER["FastMCP Server — 9 Tools"]
+        CORE["mcp_admin_core"]
     end
 
-    subgraph "Hermes Agent v0.17.0"
-        GW["Gateway API :8642<br/>Bearer Auth"]
-        DB["Dashboard API :9119<br/>Cookie Auth"]
+    subgraph Agent["Hermes Agent v0.17.0"]
+        GW["Gateway API :8642 — Bearer Auth"]
+        DB["Dashboard API :9119 — Cookie Auth"]
     end
 
-    CD -->|Streamable HTTP| PROXY
-    CC -->|Streamable HTTP| PROXY
-    N8N -->|Streamable HTTP| PROXY
+    CONFIG[("config.json")]
+
+    CD -->|"Streamable HTTP"| PROXY
+    CC -->|"Streamable HTTP"| PROXY
+    N8N -->|"Streamable HTTP"| PROXY
     PROXY --> MCP_SERVER
     MCP_SERVER --> CORE
-    SPA -->|REST| API
+    SPA -->|"REST"| API
     API --> CORE
-    MCP_SERVER -->|httpx| GW
-    MCP_SERVER -->|httpx| DB
-    API -->|Dashboard Proxy| DB
-    API -->|Gateway Proxy| GW
-    CORE -->|File Store| CONFIG[/data/config.json]
+    MCP_SERVER -->|"httpx"| GW
+    MCP_SERVER -->|"httpx"| DB
+    API -->|"Dashboard Proxy"| DB
+    API -->|"Gateway Proxy"| GW
+    CORE -->|"File Store"| CONFIG
 ```
 
 ---
