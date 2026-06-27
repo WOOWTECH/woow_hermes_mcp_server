@@ -235,5 +235,5 @@ async def test_dashboard() -> ConnectionTestResult:
     return ConnectionTestResult(
         success=True,
         message="Hermes Dashboard API is reachable",
-        details={"url": url, "status_code": resp.status_code},
+        details={"url": dashboard_url, "status_code": resp.status_code, "config_keys": len(body)},
     )
