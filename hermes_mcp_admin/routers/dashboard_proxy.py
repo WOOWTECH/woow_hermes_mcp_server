@@ -10,6 +10,7 @@ Covers: skills, model, mcp-servers, hermes-tools, sessions,
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -20,6 +21,9 @@ from mcp_admin_core.config import get_config_store
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["dashboard-proxy"])
+
+# Cookie cache: (cookie_value, expiry_timestamp)
+_cookie_cache: dict[str, tuple[str, float]] = {}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,10 +36,16 @@ async def _get_conn() -> dict[str, str]:
 
 
 async def _dashboard_cookie(conn: dict[str, str]) -> str:
-    """Login to Dashboard and return session cookie."""
+    """Login to Dashboard and return session cookie. Caches for 10 minutes."""
     url = conn.get("dashboard_url", "")
     if not url:
         raise HTTPException(502, "Dashboard URL not configured")
+
+    # Check cache
+    cached = _cookie_cache.get(url)
+    if cached and cached[1] > time.time():
+        return cached[0]
+
     username = conn.get("dashboard_username", "admin")
     password = conn.get("dashboard_password", "admin")
     try:
@@ -47,7 +57,9 @@ async def _dashboard_cookie(conn: dict[str, str]) -> str:
             resp.raise_for_status()
             for h in resp.headers.get_list("set-cookie"):
                 if "hermes_session_at=" in h:
-                    return h.split("hermes_session_at=")[1].split(";")[0].strip('"')
+                    cookie = h.split("hermes_session_at=")[1].split(";")[0].strip('"')
+                    _cookie_cache[url] = (cookie, time.time() + 600)  # cache 10 min
+                    return cookie
     except Exception as exc:
         logger.error("Dashboard login failed: %s", exc)
         raise HTTPException(502, f"Dashboard login failed: {exc}")
