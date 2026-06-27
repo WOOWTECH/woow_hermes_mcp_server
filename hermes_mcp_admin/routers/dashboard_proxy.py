@@ -220,20 +220,35 @@ async def update_skills(request: Request) -> dict[str, Any]:
 
 @router.get("/model")
 async def get_model() -> dict[str, Any]:
-    data = await _dashboard_get("/api/settings")
+    data = await _dashboard_get("/api/config")
     if not data or not isinstance(data, dict):
         return {"provider": "", "model": "", "aux_model": "", "moa_enabled": False}
-    # Extract model info from settings
-    model_cfg = data.get("model", data.get("llm", {}))
-    if isinstance(model_cfg, dict):
+    model_val = data.get("model", "")
+    # Model may be a string like "MiniMax-M1-80k" or a dict
+    if isinstance(model_val, dict):
         return {
-            "provider": model_cfg.get("provider", ""),
-            "model": model_cfg.get("model", model_cfg.get("name", "")),
-            "aux_model": model_cfg.get("aux_model", ""),
-            "moa_enabled": model_cfg.get("moa_enabled", False),
-            "moa_models": model_cfg.get("moa_models", []),
+            "provider": model_val.get("provider", ""),
+            "model": model_val.get("model", model_val.get("name", "")),
+            "aux_model": model_val.get("aux_model", ""),
+            "moa_enabled": model_val.get("moa_enabled", False),
+            "moa_models": model_val.get("moa_models", []),
         }
-    return {"provider": "", "model": str(model_cfg), "aux_model": "", "moa_enabled": False}
+    # Model is a plain string - extract provider from providers config
+    providers_cfg = data.get("providers", {})
+    provider_name = ""
+    if isinstance(providers_cfg, dict):
+        for pname in providers_cfg:
+            provider_name = pname
+            break
+    moa_cfg = data.get("moa", {})
+    aux_cfg = data.get("auxiliary", {})
+    return {
+        "provider": provider_name,
+        "model": str(model_val) if model_val else "N/A",
+        "aux_model": aux_cfg.get("compression", "") if isinstance(aux_cfg, dict) else "",
+        "moa_enabled": moa_cfg.get("active_preset", "") != "" if isinstance(moa_cfg, dict) else False,
+        "moa_models": [],
+    }
 
 
 @router.get("/model/options")
@@ -255,9 +270,8 @@ async def get_model_options() -> dict[str, Any]:
 @router.post("/model/set")
 async def set_model(request: Request) -> dict[str, Any]:
     body = await request.json()
-    # Try to update via Dashboard settings
     try:
-        result = await _dashboard_put("/api/settings", {"model": body})
+        result = await _dashboard_put("/api/config", {"model": body.get("model", "")})
         return result or {"status": "ok", "message": "Model configuration applied"}
     except HTTPException:
         return {"status": "ok", "message": "Model update sent (may require restart)"}
@@ -269,23 +283,26 @@ async def set_model(request: Request) -> dict[str, Any]:
 
 @router.get("/mcp-servers")
 async def get_mcp_servers() -> dict[str, Any]:
-    data = await _dashboard_get("/api/settings")
+    # MCP servers in Hermes are configured via toolsets or lsp.servers
+    data = await _dashboard_get("/api/config")
     if not data or not isinstance(data, dict):
         return {"servers": []}
-    servers_cfg = data.get("mcp_servers", data.get("mcpServers", {}))
-    if isinstance(servers_cfg, dict):
-        servers = []
-        for name, cfg in servers_cfg.items():
-            if isinstance(cfg, dict):
-                servers.append({
-                    "name": name,
-                    "url": cfg.get("url", cfg.get("command", "")),
-                    "type": cfg.get("type", "sse" if cfg.get("url") else "stdio"),
-                    "enabled": cfg.get("enabled", True),
-                    "status": "unknown",
-                })
-        return {"servers": servers}
-    return {"servers": []}
+    servers = []
+    # Check lsp.servers
+    lsp_cfg = data.get("lsp", {})
+    if isinstance(lsp_cfg, dict):
+        lsp_servers = lsp_cfg.get("servers", {})
+        if isinstance(lsp_servers, dict):
+            for name, cfg in lsp_servers.items():
+                if isinstance(cfg, dict):
+                    servers.append({
+                        "name": name,
+                        "url": cfg.get("url", cfg.get("command", "")),
+                        "type": cfg.get("type", "sse" if cfg.get("url") else "stdio"),
+                        "enabled": cfg.get("enabled", True),
+                        "status": "unknown",
+                    })
+    return {"servers": servers}
 
 
 @router.post("/mcp-servers")
@@ -316,13 +333,16 @@ async def test_mcp_server(name: str) -> dict[str, Any]:
 
 @router.get("/hermes-tools")
 async def get_hermes_tools() -> dict[str, Any]:
-    data = await _dashboard_get("/api/tools")
-    if data is None:
+    data = await _dashboard_get("/api/config")
+    if not data or not isinstance(data, dict):
         return {"toolsets": []}
-    if isinstance(data, list):
+    toolsets_cfg = data.get("toolsets", [])
+    if isinstance(toolsets_cfg, list):
         toolsets = []
-        for t in data:
-            if isinstance(t, dict):
+        for t in toolsets_cfg:
+            if isinstance(t, str):
+                toolsets.append({"name": t, "description": "", "category": "general", "enabled": True})
+            elif isinstance(t, dict):
                 toolsets.append({
                     "name": t.get("name", ""),
                     "description": t.get("description", ""),
@@ -331,7 +351,7 @@ async def get_hermes_tools() -> dict[str, Any]:
                     "tool_count": t.get("tool_count"),
                 })
         return {"toolsets": toolsets}
-    return data if isinstance(data, dict) else {"toolsets": []}
+    return {"toolsets": []}
 
 
 @router.put("/hermes-tools")
@@ -380,13 +400,28 @@ async def bulk_delete_sessions(request: Request) -> dict[str, Any]:
 @router.get("/gateway/status")
 async def get_gateway_status() -> dict[str, Any]:
     try:
-        data = await _gateway_get("/health")
+        data = await _dashboard_get("/api/status")
+        if isinstance(data, dict):
+            return {
+                "running": data.get("gateway_running", False),
+                "uptime_seconds": None,
+                "last_restart": data.get("gateway_updated_at"),
+                "pid": None,
+                "restart_count": 0,
+                "version": data.get("version"),
+                "active_sessions": data.get("active_sessions", 0),
+                "gateway_state": data.get("gateway_state", "unknown"),
+            }
+    except HTTPException:
+        pass
+    try:
+        gw = await _gateway_get("/health")
         return {
             "running": True,
-            "uptime_seconds": data.get("uptime_seconds") if isinstance(data, dict) else None,
-            "last_restart": data.get("last_restart") if isinstance(data, dict) else None,
-            "pid": data.get("pid") if isinstance(data, dict) else None,
-            "restart_count": data.get("restart_count", 0) if isinstance(data, dict) else 0,
+            "uptime_seconds": gw.get("uptime_seconds") if isinstance(gw, dict) else None,
+            "last_restart": None,
+            "pid": None,
+            "restart_count": 0,
         }
     except HTTPException:
         return {"running": False, "uptime_seconds": None}
@@ -416,22 +451,21 @@ async def drain_restart_gateway() -> dict[str, Any]:
 
 @router.get("/config/editor")
 async def get_config_editor() -> dict[str, Any]:
-    data = await _dashboard_get("/api/settings")
+    data = await _dashboard_get("/api/config")
     if data is None:
         return {"config": {}, "denied_keys": []}
     denied = [
-        "auth", "auth.password", "auth.api_key",
-        "database", "database.url", "database.password",
-        "redis", "redis.url", "redis.password",
+        "dashboard.basic_auth", "dashboard.oauth",
+        "secrets", "security.tirith_path",
     ]
     return {"config": data, "denied_keys": denied}
 
 
-@router.put("/config")
+@router.put("/config/full")
 async def update_config(request: Request) -> dict[str, Any]:
     body = await request.json()
     config_data = body.get("config", body)
-    result = await _dashboard_put("/api/settings", config_data)
+    result = await _dashboard_put("/api/config", config_data)
     return result or {"status": "ok", "message": "Configuration saved"}
 
 

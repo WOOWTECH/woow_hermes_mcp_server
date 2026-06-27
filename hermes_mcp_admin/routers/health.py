@@ -162,26 +162,28 @@ async def get_health() -> dict[str, Any]:
             if cookie:
                 headers = {"Cookie": f'hermes_session_at="{cookie}"'}
                 async with httpx.AsyncClient(timeout=10.0) as client:
-                    # Settings (model info)
+                    # Config (model + toolsets info)
                     try:
-                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/settings", headers=headers)
+                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/config", headers=headers)
                         if r.status_code == 200:
-                            settings = r.json()
-                            if isinstance(settings, dict):
-                                m = settings.get("model", settings.get("llm", {}))
-                                if isinstance(m, dict):
-                                    model_info = {"provider": m.get("provider", ""), "name": m.get("model", m.get("name", ""))}
-                    except Exception:
-                        pass
-
-                    # Tools
-                    try:
-                        r = await client.get(f"{dashboard_url.rstrip('/')}/api/tools", headers=headers)
-                        if r.status_code == 200:
-                            tdata = r.json()
-                            if isinstance(tdata, list):
-                                enabled = sum(1 for t in tdata if isinstance(t, dict) and t.get("enabled", True))
-                                tools_info = {"enabled": enabled, "total": len(tdata)}
+                            cfg = r.json()
+                            if isinstance(cfg, dict):
+                                # Model info
+                                model_val = cfg.get("model", "")
+                                providers_cfg = cfg.get("providers", {})
+                                provider = ""
+                                if isinstance(providers_cfg, dict):
+                                    for p in providers_cfg:
+                                        provider = p
+                                        break
+                                model_info = {
+                                    "provider": provider,
+                                    "name": str(model_val) if model_val else "N/A",
+                                }
+                                # Toolsets
+                                toolsets = cfg.get("toolsets", [])
+                                if isinstance(toolsets, list):
+                                    tools_info = {"enabled": len(toolsets), "total": len(toolsets)}
                     except Exception:
                         pass
 
@@ -201,7 +203,12 @@ async def get_health() -> dict[str, Any]:
                         r = await client.get(f"{dashboard_url.rstrip('/')}/api/sessions", headers=headers)
                         if r.status_code == 200:
                             sess = r.json()
-                            if isinstance(sess, list):
+                            if isinstance(sess, dict):
+                                sessions_info = {
+                                    "active": sess.get("total", 0),
+                                    "recent": sess.get("sessions", [])[:5],
+                                }
+                            elif isinstance(sess, list):
                                 sessions_info = {"active": len(sess), "recent": sess[:5]}
                     except Exception:
                         pass
