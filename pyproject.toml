@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "woow-hermes-mcp-server"
+version = "1.0.0"
+description = "Hermes MCP Admin + Server for managing Hermes AI assistant via MCP"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+    "pyjwt>=2.9",
+    "python-multipart",
+    "mcp>=1.0",
+]
+
+[project.scripts]
+hermes-mcp-admin = "hermes_mcp_admin.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes_mcp_admin", "hermes_mcp_server", "mcp_admin_core"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]

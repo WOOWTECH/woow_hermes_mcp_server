@@ -1,0 +1,8 @@
+denied_config_keys:
+  - terminal.backend
+  - api_server.cors_origins
+  - api_server.host
+denied_mcp_operations:
+  - add_stdio_command
+denied_env_operations:
+  - reveal

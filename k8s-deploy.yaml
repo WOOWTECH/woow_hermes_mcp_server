@@ -1,0 +1,134 @@
+# Hermes MCP Admin K8s Deployment Manifests
+# Deploy to kasim-odoo namespace (same as MCP servers)
+---
+# RBAC: ServiceAccount with namespace-scoped access
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hermes-mcp-admin-sa
+  namespace: kasim-odoo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hermes-mcp-admin-role
+  namespace: kasim-odoo
+rules:
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "list", "patch", "update"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hermes-mcp-admin-binding
+  namespace: kasim-odoo
+subjects:
+- kind: ServiceAccount
+  name: hermes-mcp-admin-sa
+  namespace: kasim-odoo
+roleRef:
+  kind: Role
+  name: hermes-mcp-admin-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Hermes MCP Admin Deployment (port 9003)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-mcp-admin
+  namespace: kasim-odoo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hermes-mcp-admin
+  template:
+    metadata:
+      labels:
+        app: hermes-mcp-admin
+    spec:
+      serviceAccountName: hermes-mcp-admin-sa
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+      - name: admin
+        image: jcr-prod.woowtech.io/woow-paas-docker-local/hermes-mcp-admin:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9003
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: HERMES_GATEWAY_URL
+          valueFrom:
+            secretKeyRef:
+              name: hermes-mcp-secrets
+              key: gateway-url
+        - name: HERMES_GATEWAY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hermes-mcp-secrets
+              key: gateway-api-key
+        - name: HERMES_DASHBOARD_URL
+          valueFrom:
+            secretKeyRef:
+              name: hermes-mcp-secrets
+              key: dashboard-url
+        - name: HERMES_DASHBOARD_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: hermes-mcp-secrets
+              key: dashboard-username
+        - name: HERMES_DASHBOARD_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: hermes-mcp-secrets
+              key: dashboard-password
+        - name: MCP_ADMIN_CONFIG
+          value: /data/config.json
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 9003
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9003
+          initialDelaySeconds: 15
+          periodSeconds: 30
+      volumes:
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-mcp-admin-svc
+  namespace: kasim-odoo
+spec:
+  selector:
+    app: hermes-mcp-admin
+  ports:
+  - port: 9003
+    targetPort: 9003

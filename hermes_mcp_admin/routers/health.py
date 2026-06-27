@@ -1,0 +1,139 @@
+"""Health dashboard router for Hermes MCP Admin.
+
+Returns dual health data checking both Gateway and Dashboard APIs.
+
+Endpoints:
+    GET /api/health - Dashboard health data with dual health checks
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import httpx
+from fastapi import APIRouter
+
+from mcp_admin_core.config import get_config_store
+from mcp_admin_core.process import get_process_manager
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/health", tags=["health"])
+
+
+async def _check_gateway(gateway_url: str, api_key: str) -> dict[str, Any]:
+    """Check Hermes Gateway health via GET /health with Bearer auth."""
+    if not gateway_url:
+        return {"healthy": False, "url": "", "error": "Not configured"}
+    url = f"{gateway_url.rstrip('/')}/health"
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            return {"healthy": True, "url": gateway_url, "status_code": resp.status_code}
+    except httpx.ConnectError:
+        return {"healthy": False, "url": gateway_url, "error": "Connection refused"}
+    except httpx.TimeoutException:
+        return {"healthy": False, "url": gateway_url, "error": "Timed out"}
+    except httpx.HTTPStatusError as exc:
+        return {"healthy": False, "url": gateway_url, "error": f"HTTP {exc.response.status_code}"}
+    except Exception as exc:
+        return {"healthy": False, "url": gateway_url, "error": str(exc)}
+
+
+async def _check_dashboard(dashboard_url: str, username: str, password: str) -> dict[str, Any]:
+    """Check Hermes Dashboard health via GET /api/status with Basic auth."""
+    if not dashboard_url:
+        return {"healthy": False, "url": "", "error": "Not configured"}
+    url = f"{dashboard_url.rstrip('/')}/api/status"
+    try:
+        auth = httpx.BasicAuth(username, password) if username else None
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, auth=auth)
+            resp.raise_for_status()
+            return {"healthy": True, "url": dashboard_url, "status_code": resp.status_code}
+    except httpx.ConnectError:
+        return {"healthy": False, "url": dashboard_url, "error": "Connection refused"}
+    except httpx.TimeoutException:
+        return {"healthy": False, "url": dashboard_url, "error": "Timed out"}
+    except httpx.HTTPStatusError as exc:
+        return {"healthy": False, "url": dashboard_url, "error": f"HTTP {exc.response.status_code}"}
+    except Exception as exc:
+        return {"healthy": False, "url": dashboard_url, "error": str(exc)}
+
+
+async def _get_hermes_version(gateway_url: str, api_key: str) -> str | None:
+    """Get Hermes version from Gateway /v1/capabilities."""
+    if not gateway_url:
+        return None
+    url = f"{gateway_url.rstrip('/')}/v1/capabilities"
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                body = resp.json()
+                if isinstance(body, dict):
+                    return body.get("version")
+    except Exception as exc:
+        logger.debug("Failed to get Hermes version: %s", exc)
+    return None
+
+
+@router.get("")
+async def get_health() -> dict[str, Any]:
+    """Return health data in the format the Dashboard frontend expects."""
+    store = get_config_store()
+    pm = get_process_manager()
+
+    conn = await store.get("connection", {})
+    gateway_url = conn.get("gateway_url", "")
+    gateway_key = conn.get("gateway_api_key", "")
+    dashboard_url = conn.get("dashboard_url", "")
+    dashboard_user = conn.get("dashboard_username", "")
+    dashboard_pw = conn.get("dashboard_password", "")
+
+    pm_status = await pm.status()
+
+    # MCP server status
+    mcp_running = pm_status.get("running", False)
+    mcp_server = {
+        "healthy": mcp_running,
+        "pod_name": f"pid={pm_status.get('pid')}" if mcp_running else "stopped",
+        "restart_count": pm_status.get("restart_count", 0),
+    }
+
+    # Gateway health
+    gateway_health = await _check_gateway(gateway_url, gateway_key)
+
+    # Dashboard health
+    dashboard_health = await _check_dashboard(dashboard_url, dashboard_user, dashboard_pw)
+
+    # Hermes version from Gateway
+    hermes_version = await _get_hermes_version(gateway_url, gateway_key)
+
+    gw_healthy = gateway_health.get("healthy", False)
+    db_healthy = dashboard_health.get("healthy", False)
+
+    if mcp_running and gw_healthy and db_healthy:
+        overall = "ok"
+    elif mcp_running or gw_healthy or db_healthy:
+        overall = "degraded"
+    else:
+        overall = "error"
+
+    return {
+        "app_type": "hermes",
+        "overall_status": overall,
+        "mcp_server": mcp_server,
+        "gateway_health": gateway_health,
+        "dashboard_health": dashboard_health,
+        "version": hermes_version,
+        "namespace": "podman",
+    }
