@@ -342,16 +342,14 @@ export default function ToolManager() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-100">Tool Manager</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage MCP wrapper tools and Hermes Agent toolsets
-          </p>
-        </div>
+      <div className="mb-6">
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-100">Tool Manager</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Manage MCP wrapper tools and Hermes Agent toolsets
+        </p>
       </div>
 
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex items-center gap-2 mb-6 flex-wrap">
         <TabButton active={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')}>
           <span className="flex items-center gap-2">
             <Wrench size={14} />

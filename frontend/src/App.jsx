@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Menu } from 'lucide-react';
 import { getToken } from './api';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -27,10 +28,27 @@ function ProtectedRoute({ children }) {
 }
 
 function AppLayout({ children }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   return (
     <div className="flex min-h-screen bg-gray-950">
-      <Sidebar />
-      <main className="flex-1 ml-60 p-8 overflow-y-auto">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <main className="flex-1 lg:ml-60 p-4 sm:p-6 lg:p-8 overflow-y-auto min-h-screen">
+        <div className="flex items-center gap-3 mb-4 lg:hidden">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-2 text-gray-400 hover:text-gray-200 bg-gray-800 rounded-lg shrink-0"
+          >
+            <Menu size={20} />
+          </button>
+          <h1 className="text-lg font-bold text-gray-100 truncate">Hermes MCP Admin</h1>
+        </div>
         <div className="max-w-6xl mx-auto">{children}</div>
       </main>
     </div>

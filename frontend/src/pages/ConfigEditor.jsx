@@ -138,16 +138,15 @@ export default function ConfigEditor() {
         if (target[parts[i]] === undefined) target[parts[i]] = {};
         target = target[parts[i]];
       }
-      // Try to parse as JSON for arrays/objects/numbers/booleans
       const last = parts[parts.length - 1];
       try {
         target[last] = JSON.parse(value);
       } catch {
         target[last] = value;
       }
+      setRawContent(JSON.stringify(next, null, 2));
       return next;
     });
-    setRawContent(JSON.stringify(treeData, null, 2));
     setIsDirty(true);
   }
 
@@ -213,17 +212,17 @@ export default function ConfigEditor() {
   const lineCount = rawContent.split('\n').length;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)]">
-      <div className="flex items-center justify-between mb-4">
+    <div className="flex flex-col h-[calc(100vh-10rem)] lg:h-[calc(100vh-8rem)]">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-100">Config Editor</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-100">Config Editor</h2>
           <p className="text-sm text-gray-500 mt-1">
             Edit Hermes Agent configuration
             {isDirty && <span className="text-amber-400 ml-2">(unsaved changes)</span>}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* View Mode Toggle */}
           <div className="flex border border-gray-700 rounded-lg overflow-hidden">
             <button

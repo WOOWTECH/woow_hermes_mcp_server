@@ -106,7 +106,7 @@ export default function ModelManager() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-100">Model Manager</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-100">Model Manager</h2>
         <p className="text-sm text-gray-500 mt-1">
           Configure the Hermes Agent LLM model and provider
         </p>

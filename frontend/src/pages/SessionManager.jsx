@@ -140,10 +140,11 @@ export default function SessionManager() {
 
   const bulkDeleteMutation = useMutation({
     mutationFn: (ids) => apiPost('/sessions/bulk-delete', { session_ids: Array.from(ids) }),
-    onSuccess: () => {
+    onSuccess: (_data, ids) => {
+      const count = ids.size;
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       setSelectedIds(new Set());
-      setFeedback({ type: 'success', message: `${selectedIds.size} sessions deleted` });
+      setFeedback({ type: 'success', message: `${count} sessions deleted` });
     },
     onError: (err) => {
       setFeedback({ type: 'error', message: err.message });
@@ -215,14 +216,14 @@ export default function SessionManager() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-gray-100">Session Manager</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-100">Session Manager</h2>
           <p className="text-sm text-gray-500 mt-1">
             {sessions.length} session{sessions.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {selectedIds.size > 0 && (
             <button
               onClick={() => bulkDeleteMutation.mutate(selectedIds)}

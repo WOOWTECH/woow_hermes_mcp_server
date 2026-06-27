@@ -16,6 +16,7 @@ import {
   FileText,
   Power,
   MessageSquare,
+  X,
 } from 'lucide-react';
 import { apiGet, clearToken } from '../api';
 
@@ -55,7 +56,7 @@ const navSections = [
   },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ open, onClose }) {
   const navigate = useNavigate();
 
   const { data: health } = useQuery({
@@ -72,10 +73,26 @@ export default function Sidebar() {
     navigate('/login');
   }
 
+  function handleNavClick() {
+    if (onClose) onClose();
+  }
+
   return (
-    <aside className="w-60 bg-gray-900 border-r border-gray-800 flex flex-col h-screen fixed left-0 top-0">
+    <aside
+      className={`w-60 bg-gray-900 border-r border-gray-800 flex flex-col h-screen fixed left-0 top-0 z-40 transition-transform duration-200 ease-in-out ${
+        open ? 'translate-x-0' : '-translate-x-full'
+      } lg:translate-x-0`}
+    >
       <div className="p-5 border-b border-gray-800">
-        <h1 className="text-lg font-bold text-gray-100 tracking-tight">Hermes MCP Admin</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-bold text-gray-100 tracking-tight">Hermes MCP Admin</h1>
+          <button
+            onClick={onClose}
+            className="p-1 text-gray-500 hover:text-gray-300 lg:hidden"
+          >
+            <X size={18} />
+          </button>
+        </div>
         <div className="flex items-center gap-3 mt-2">
           <span className="flex items-center gap-1 text-xs text-gray-500">
             <span>Gateway</span>
@@ -120,6 +137,7 @@ export default function Sidebar() {
                 key={to}
                 to={to}
                 end={to === '/'}
+                onClick={handleNavClick}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                     isActive

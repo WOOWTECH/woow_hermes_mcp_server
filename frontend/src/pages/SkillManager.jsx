@@ -253,16 +253,16 @@ export default function SkillManager() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-gray-100">Skill Manager</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-100">Skill Manager</h2>
           <p className="text-sm text-gray-500 mt-1">
             {enabledCount} of {skills.length} skills enabled
           </p>
         </div>
         <button
           onClick={() => setShowInstallModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-500 text-white font-medium rounded-lg text-sm transition-colors"
+          className="flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-500 text-white font-medium rounded-lg text-sm transition-colors shrink-0 self-start sm:self-auto"
         >
           <Download size={14} />
           <span>Install from Hub</span>
@@ -270,7 +270,7 @@ export default function SkillManager() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
         <div className="relative flex-1">
           <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input
@@ -281,7 +281,7 @@ export default function SkillManager() {
             className="w-full pl-10 pr-4 py-2.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-200 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-colors"
           />
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap shrink-0">
           {CATEGORIES.map((cat) => (
             <button
               key={cat}

@@ -290,7 +290,7 @@ export default function McpServerManager() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-100">MCP Server Manager</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-100">MCP Server Manager</h2>
         <p className="text-sm text-gray-500 mt-1">
           Manage external MCP servers connected to the Hermes Agent
         </p>

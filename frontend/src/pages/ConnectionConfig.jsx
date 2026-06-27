@@ -137,7 +137,7 @@ export default function ConnectionConfig() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-100">Connection Configuration</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-100">Connection Configuration</h2>
         <p className="text-sm text-gray-500 mt-1">
           Configure the dual connection to the Hermes Agent gateway and dashboard
         </p>

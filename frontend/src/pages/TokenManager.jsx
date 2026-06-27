@@ -73,7 +73,7 @@ export default function TokenManager() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-100">Token Manager</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-100">Token Manager</h2>
         <p className="text-sm text-gray-500 mt-1">Manage the MCP proxy authentication token</p>
       </div>
 
