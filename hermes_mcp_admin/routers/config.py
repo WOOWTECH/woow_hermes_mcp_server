@@ -149,14 +149,14 @@ async def test_gateway() -> ConnectionTestResult:
     except httpx.TimeoutException:
         return ConnectionTestResult(
             success=False,
-            message=f"Connection timed out after 10 s to {url}",
+            message=f"Connection timed out after 10 s",
         )
     except httpx.HTTPStatusError as exc:
         return ConnectionTestResult(
             success=False,
             message=f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
         )
-    except Exception as exc:
+    except Exception as exc:  # catch-all
         return ConnectionTestResult(
             success=False,
             message=f"Unexpected error: {exc}",
@@ -219,14 +219,14 @@ async def test_dashboard() -> ConnectionTestResult:
     except httpx.TimeoutException:
         return ConnectionTestResult(
             success=False,
-            message=f"Connection timed out after 10 s to {url}",
+            message=f"Connection timed out after 10 s",
         )
     except httpx.HTTPStatusError as exc:
         return ConnectionTestResult(
             success=False,
             message=f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
         )
-    except Exception as exc:
+    except Exception as exc:  # catch-all
         return ConnectionTestResult(
             success=False,
             message=f"Unexpected error: {exc}",
