@@ -1,4 +1,4 @@
-"""Hermes MCP tool registry with all 9 tools grouped into 3 categories."""
+"""Hermes MCP tool registry with all 11 tools grouped into 3 categories."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class ToolDefinition(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Tool Registry: 9 tools in 3 categories (2 Read + 6 Write + 1 Agent)
+# Tool Registry: 11 tools in 3 categories (2 Read + 8 Write + 1 Agent)
 # ---------------------------------------------------------------------------
 
 TOOL_REGISTRY: list[ToolDefinition] = [
@@ -48,7 +48,7 @@ TOOL_REGISTRY: list[ToolDefinition] = [
     ),
 
     # -----------------------------------------------------------------------
-    # Write (6 tools) - mutating operations with dry_run support
+    # Write (8 tools) - mutating operations with dry_run support
     # -----------------------------------------------------------------------
     ToolDefinition(
         name="hermes_skill",
@@ -90,6 +90,20 @@ TOOL_REGISTRY: list[ToolDefinition] = [
         category=ToolCategory.WRITE,
         description="Manage Hermes Gateway (status, restart). Supports dry_run mode",
         operations=["status", "restart"],
+        dangerous=True,
+    ),
+    ToolDefinition(
+        name="hermes_cron",
+        category=ToolCategory.WRITE,
+        description="Manage Hermes cron/scheduled jobs (list, create, update, delete, trigger, pause, resume)",
+        operations=["list", "create", "update", "delete", "trigger", "pause", "resume"],
+        dangerous=True,
+    ),
+    ToolDefinition(
+        name="hermes_webhook",
+        category=ToolCategory.WRITE,
+        description="Manage Hermes webhooks (list, enable_platform, create, delete, toggle)",
+        operations=["list", "enable_platform", "create", "delete", "toggle"],
         dangerous=True,
     ),
 
