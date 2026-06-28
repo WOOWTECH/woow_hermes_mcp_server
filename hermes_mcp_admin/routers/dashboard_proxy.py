@@ -226,6 +226,168 @@ async def update_skills(request: Request) -> dict[str, Any]:
     return result or {"status": "ok"}
 
 
+@router.post("/skills/create")
+async def create_skill(request: Request) -> dict[str, Any]:
+    """Create a new skill with YAML frontmatter."""
+    body = await request.json()
+    name = body.get("name", "")
+    desc = body.get("description", "")
+    category = body.get("category", "")
+    content_body = body.get("content", "")
+    # Build SKILL.md with YAML frontmatter
+    frontmatter = f"---\nname: {name}\ndescription: {desc}\n"
+    if category:
+        frontmatter += f"category: {category}\n"
+    frontmatter += "---\n\n"
+    full_content = frontmatter + content_body
+    return await _dashboard_post("/api/skills", {"name": name, "content": full_content})
+
+
+@router.get("/skills/content")
+async def get_skill_content(name: str) -> dict[str, Any]:
+    """Get skill SKILL.md content."""
+    data = await _dashboard_get(f"/api/skills/content?name={name}")
+    return data if isinstance(data, dict) else {"content": data or ""}
+
+
+@router.put("/skills/content")
+async def update_skill_content(request: Request) -> dict[str, Any]:
+    """Update skill content. Body: {name, content}"""
+    body = await request.json()
+    name = body.get("name", "")
+    content = body.get("content", "")
+    # Ensure YAML frontmatter exists
+    if not content.strip().startswith("---"):
+        content = f"---\nname: {name}\n---\n\n{content}"
+    return await _dashboard_put("/api/skills/content", {"name": name, "content": content})
+
+
+@router.put("/skills/toggle")
+async def toggle_skill(request: Request) -> dict[str, Any]:
+    """Toggle skill enabled/disabled. Body: {name, enabled}"""
+    body = await request.json()
+    return await _dashboard_put("/api/skills/toggle", body)
+
+
+# ---------------------------------------------------------------------------
+# Cron / Scheduling
+# ---------------------------------------------------------------------------
+
+@router.get("/cron/jobs")
+async def list_cron_jobs() -> Any:
+    return await _dashboard_get("/api/cron/jobs")
+
+
+@router.post("/cron/jobs")
+async def create_cron_job(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    return await _dashboard_post("/api/cron/jobs", body)
+
+
+@router.put("/cron/jobs/{job_id}")
+async def update_cron_job(job_id: str, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    return await _dashboard_put(f"/api/cron/jobs/{job_id}", {"updates": body})
+
+
+@router.delete("/cron/jobs/{job_id}")
+async def delete_cron_job(job_id: str) -> dict[str, Any]:
+    return await _dashboard_delete(f"/api/cron/jobs/{job_id}")
+
+
+@router.post("/cron/jobs/{job_id}/trigger")
+async def trigger_cron_job(job_id: str) -> dict[str, Any]:
+    return await _dashboard_post(f"/api/cron/jobs/{job_id}/trigger")
+
+
+@router.post("/cron/jobs/{job_id}/pause")
+async def pause_cron_job(job_id: str) -> dict[str, Any]:
+    return await _dashboard_post(f"/api/cron/jobs/{job_id}/pause")
+
+
+@router.post("/cron/jobs/{job_id}/resume")
+async def resume_cron_job(job_id: str) -> dict[str, Any]:
+    return await _dashboard_post(f"/api/cron/jobs/{job_id}/resume")
+
+
+# ---------------------------------------------------------------------------
+# Webhooks
+# ---------------------------------------------------------------------------
+
+@router.get("/webhooks")
+async def list_webhooks() -> Any:
+    return await _dashboard_get("/api/webhooks")
+
+
+@router.post("/webhooks/enable")
+async def enable_webhooks() -> dict[str, Any]:
+    return await _dashboard_post("/api/webhooks/enable")
+
+
+@router.post("/webhooks")
+async def create_webhook(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    return await _dashboard_post("/api/webhooks", body)
+
+
+@router.delete("/webhooks/{name}")
+async def delete_webhook(name: str) -> dict[str, Any]:
+    return await _dashboard_delete(f"/api/webhooks/{name}")
+
+
+@router.put("/webhooks/{name}/enabled")
+async def toggle_webhook(name: str, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    return await _dashboard_put(f"/api/webhooks/{name}/enabled", body)
+
+
+# ---------------------------------------------------------------------------
+# Toolsets (Hermes internal toolsets)
+# ---------------------------------------------------------------------------
+
+@router.get("/toolsets")
+async def list_toolsets() -> Any:
+    return await _dashboard_get("/api/tools/toolsets")
+
+
+@router.put("/toolsets/{name}")
+async def toggle_toolset(name: str, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    return await _dashboard_put(f"/api/tools/toolsets/{name}", body)
+
+
+# ---------------------------------------------------------------------------
+# MCP Servers (proper Dashboard endpoints)
+# ---------------------------------------------------------------------------
+
+@router.get("/mcp-servers/live")
+async def list_mcp_servers_live() -> Any:
+    """List MCP servers from Dashboard /api/mcp/servers."""
+    return await _dashboard_get("/api/mcp/servers")
+
+
+@router.post("/mcp-servers/live")
+async def add_mcp_server_live(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    return await _dashboard_post("/api/mcp/servers", body)
+
+
+@router.delete("/mcp-servers/live/{name}")
+async def delete_mcp_server_live(name: str) -> dict[str, Any]:
+    return await _dashboard_delete(f"/api/mcp/servers/{name}")
+
+
+@router.put("/mcp-servers/live/{name}/enabled")
+async def toggle_mcp_server_live(name: str, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    return await _dashboard_put(f"/api/mcp/servers/{name}/enabled", body)
+
+
+@router.post("/mcp-servers/live/{name}/test")
+async def test_mcp_server_live(name: str) -> dict[str, Any]:
+    return await _dashboard_post(f"/api/mcp/servers/{name}/test")
+
+
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -484,7 +646,7 @@ async def get_config_editor() -> dict[str, Any]:
 async def update_config(request: Request) -> dict[str, Any]:
     body = await request.json()
     config_data = body.get("config", body)
-    result = await _dashboard_put("/api/config", config_data)
+    result = await _dashboard_put("/api/config", {"config": config_data})
     return result or {"status": "ok", "message": "Configuration saved"}
 
 
