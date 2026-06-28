@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, Pause, Play, ArrowDown, ArrowUp, Trash2, Radio } from 'lucide-react';
+import { Search, Pause, Play, ArrowDown, ArrowUp, Trash2, Radio, RefreshCw } from 'lucide-react';
 import { createEventSource } from '../api';
 
 export default function LogViewer() {
@@ -11,28 +11,46 @@ export default function LogViewer() {
   const containerRef = useRef(null);
   const eventSourceRef = useRef(null);
   const pausedLogsRef = useRef([]);
+  const pausedRef = useRef(false);
 
-  const addLog = useCallback(
-    (entry) => {
-      if (paused) {
-        pausedLogsRef.current.push(entry);
-        return;
-      }
-      setLogs((prev) => {
-        const updated = [...prev, entry];
-        if (updated.length > 2000) {
-          return updated.slice(-1500);
-        }
-        return updated;
-      });
-    },
-    [paused]
-  );
-
+  // Keep the ref in sync with state so the SSE callback always sees
+  // the latest paused value without needing to be in the dependency array.
   useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  const addLog = useCallback((entry) => {
+    if (pausedRef.current) {
+      pausedLogsRef.current.push(entry);
+      return;
+    }
+    setLogs((prev) => {
+      const updated = [...prev, entry];
+      if (updated.length > 2000) {
+        return updated.slice(-1500);
+      }
+      return updated;
+    });
+  }, []); // stable reference -- reads pausedRef instead of paused
+
+  const connectSSE = useCallback(() => {
+    // Close existing connection if any
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
+    setConnected(false);
+
     const es = createEventSource('/logs/stream');
     eventSourceRef.current = es;
 
+    // Listen for the named "connected" event sent by the backend
+    es.addEventListener('connected', () => {
+      setConnected(true);
+    });
+
+    // Also set connected on generic open (backup)
     es.onopen = () => {
       setConnected(true);
     };
@@ -40,6 +58,11 @@ export default function LogViewer() {
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        // Skip heartbeat / error-only payloads
+        if (data.error) {
+          console.warn('Log stream error:', data.error);
+          return;
+        }
         addLog({
           id: Date.now() + Math.random(),
           timestamp: data.timestamp || new Date().toISOString(),
@@ -60,13 +83,24 @@ export default function LogViewer() {
 
     es.onerror = () => {
       setConnected(false);
-    };
-
-    return () => {
-      es.close();
+      // EventSource auto-reconnects on error. If it is CLOSED (readyState === 2)
+      // it means reconnection has given up.
     };
   }, [addLog]);
 
+  // Open SSE connection on mount; clean up on unmount
+  useEffect(() => {
+    connectSSE();
+
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, [connectSSE]);
+
+  // Flush buffered logs when un-pausing
   useEffect(() => {
     if (!paused && pausedLogsRef.current.length > 0) {
       setLogs((prev) => {
@@ -80,6 +114,7 @@ export default function LogViewer() {
     }
   }, [paused]);
 
+  // Auto-scroll when new logs arrive
   useEffect(() => {
     if (autoScroll && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
@@ -117,6 +152,10 @@ export default function LogViewer() {
     }
   }
 
+  function handleReconnect() {
+    connectSSE();
+  }
+
   return (
     <div className="flex flex-col h-[calc(100vh-10rem)] lg:h-[calc(100vh-8rem)]">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -131,6 +170,16 @@ export default function LogViewer() {
             <span className="text-sm text-gray-500">
               {connected ? 'Connected' : 'Disconnected'} &middot; {logs.length} lines
             </span>
+            {!connected && (
+              <button
+                onClick={handleReconnect}
+                className="flex items-center gap-1 text-xs text-brand-400 hover:text-brand-300 transition-colors"
+                title="Reconnect"
+              >
+                <RefreshCw size={12} />
+                <span>Reconnect</span>
+              </button>
+            )}
           </div>
         </div>
 

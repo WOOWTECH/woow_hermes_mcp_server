@@ -20,7 +20,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -39,6 +39,7 @@ router = APIRouter(prefix="/api/logs", tags=["logs"])
 LOG_BUFFER_SIZE = 5000  # max lines kept in memory
 STREAM_TAIL_LINES = 100  # initial lines to send on SSE connect
 POLL_INTERVAL = 0.5  # seconds between buffer polls for SSE
+HEARTBEAT_INTERVAL = 15  # seconds between SSE heartbeat comments
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,22 @@ _buffer_lock = asyncio.Lock()
 _buffer_seq = 0  # monotonic sequence counter for change detection
 
 
+_LEVEL_RE = re.compile(r"\b(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\b", re.IGNORECASE)
+
+
+def _extract_level(line: str) -> str:
+    """Try to extract a log level from a log line, default to 'info'."""
+    m = _LEVEL_RE.search(line)
+    if m:
+        level = m.group(1).upper()
+        if level == "CRITICAL":
+            return "error"
+        if level == "WARN":
+            return "warning"
+        return level.lower()
+    return "info"
+
+
 async def append_log_line(line: str, source: str = "mcp-server") -> None:
     """Append a log line to the in-memory buffer.
 
@@ -59,7 +76,8 @@ async def append_log_line(line: str, source: str = "mcp-server") -> None:
     global _buffer_seq  # noqa: PLW0603
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "pod": source,
+        "level": _extract_level(line),
+        "source": source,
         "message": line.rstrip(),
     }
     async with _buffer_lock:
@@ -79,15 +97,18 @@ class _BufferLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
+        # Accept any log line -- not just those with the MCP prefix
         if self._MCP_PREFIX in msg:
             # Strip the prefix for storage
             line = msg.split(self._MCP_PREFIX, 1)[-1]
-            # Schedule append in the running event loop
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(append_log_line(line, source="mcp-server"))
-            except RuntimeError:
-                pass  # no event loop -- skip
+        else:
+            line = msg
+        # Schedule append in the running event loop
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(append_log_line(line, source="mcp-server"))
+        except RuntimeError:
+            pass  # no event loop -- skip
 
 
 def install_log_capture() -> None:
@@ -117,11 +138,24 @@ install_log_capture()
 
 
 class LogEntry(BaseModel):
-    """A single log entry."""
+    """A single log entry.
+
+    Accepts both ``source`` and the legacy ``pod`` field name for
+    backward compatibility with entries already in the ring buffer.
+    """
 
     timestamp: str
-    pod: str = ""
+    level: str = "info"
+    source: str = ""
     message: str
+
+    def __init__(self, **data: Any) -> None:
+        # Migrate legacy "pod" field to "source"
+        if "pod" in data and "source" not in data:
+            data["source"] = data.pop("pod")
+        elif "pod" in data:
+            data.pop("pod")
+        super().__init__(**data)
 
 
 class LogSearchResponse(BaseModel):
@@ -143,10 +177,18 @@ async def _sse_log_generator(
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events from the in-memory log buffer.
 
-    First sends the most recent *tail_lines* from the buffer, then
-    polls for new entries and yields them as they appear.
+    First sends a ``connected`` event so the client knows the stream is
+    alive, then replays the most recent *tail_lines* from the buffer,
+    and finally polls for new entries yielding them as they appear.
+
+    Periodic SSE comment heartbeats (``:``) are sent to prevent proxies
+    and load-balancers from killing idle connections.
     """
     global _buffer_seq  # noqa: PLW0603
+
+    # 0. Send a named "connected" event so the frontend can confirm the stream is alive.
+    #    This is NOT a default "message" event -- the client must listen for event: connected.
+    yield f"event: connected\ndata: {json.dumps({'status': 'connected'})}\n\n"
 
     # 1. Send tail of existing buffer
     async with _buffer_lock:
@@ -157,23 +199,39 @@ async def _sse_log_generator(
         log_entry = LogEntry(**entry)
         yield f"data: {json.dumps(log_entry.model_dump())}\n\n"
 
-    # 2. Poll for new lines
+    # 2. Poll for new lines, with periodic heartbeat comments
+    polls_since_heartbeat = 0
+    heartbeat_every_n_polls = max(1, int(HEARTBEAT_INTERVAL / POLL_INTERVAL))
+
     try:
         while True:
             await asyncio.sleep(POLL_INTERVAL)
+            polls_since_heartbeat += 1
 
             async with _buffer_lock:
                 current_seq = _buffer_seq
-                if current_seq == last_seq:
-                    continue
-                # Calculate how many new entries appeared
-                new_count = current_seq - last_seq
-                new_entries = list(_log_buffer)[-new_count:] if new_count <= len(_log_buffer) else list(_log_buffer)
-                last_seq = current_seq
+                if current_seq != last_seq:
+                    # Calculate how many new entries appeared
+                    new_count = current_seq - last_seq
+                    new_entries = (
+                        list(_log_buffer)[-new_count:]
+                        if new_count <= len(_log_buffer)
+                        else list(_log_buffer)
+                    )
+                    last_seq = current_seq
+                else:
+                    new_entries = []
 
             for entry in new_entries:
                 log_entry = LogEntry(**entry)
                 yield f"data: {json.dumps(log_entry.model_dump())}\n\n"
+                polls_since_heartbeat = 0  # reset after real data
+
+            # Send heartbeat comment to keep connection alive
+            if polls_since_heartbeat >= heartbeat_every_n_polls:
+                yield ": heartbeat\n\n"
+                polls_since_heartbeat = 0
+
     except asyncio.CancelledError:
         logger.info("SSE log stream cancelled by client")
         return
