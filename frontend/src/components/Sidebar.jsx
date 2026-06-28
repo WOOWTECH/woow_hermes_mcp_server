@@ -16,6 +16,8 @@ import {
   FileText,
   Power,
   MessageSquare,
+  Clock,
+  Webhook,
   X,
 } from 'lucide-react';
 import { apiGet, clearToken } from '../api';
@@ -44,6 +46,8 @@ const navSections = [
       { to: '/config-editor', label: 'Config', icon: FileText },
       { to: '/gateway', label: 'Gateway', icon: Power },
       { to: '/sessions', label: 'Sessions', icon: MessageSquare },
+      { to: '/cron', label: 'Cron Jobs', icon: Clock },
+      { to: '/webhooks', label: 'Webhooks', icon: Webhook },
     ],
   },
   {
