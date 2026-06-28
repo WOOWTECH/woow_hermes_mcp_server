@@ -28,3 +28,9 @@ dev = [
     "pytest-asyncio",
     "httpx",
 ]
+
+[tool.pytest.ini_options]
+# mcp_admin_core 共用核心的回歸測試網（Phase 0 安全網）。
+# 核心在三個 repo 中為 byte-identical，於此測一次即覆蓋三者。
+asyncio_mode = "auto"
+testpaths = ["tests"]
