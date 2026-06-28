@@ -10,16 +10,7 @@ import TokenManager from './pages/TokenManager';
 import LogViewer from './pages/LogViewer';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
-import ModelManager from './pages/ModelManager';
-import SkillManager from './pages/SkillManager';
-import McpServerManager from './pages/McpServerManager';
-import HermesToolsets from './pages/HermesToolsets';
-import GatewayControl from './pages/GatewayControl';
-import SessionManager from './pages/SessionManager';
-import ConfigEditor from './pages/ConfigEditor';
-import CronManager from './pages/CronManager';
-import WebhookManager from './pages/WebhookManager';
-import DenyList from './pages/DenyList';
+import PermissionEditor from './pages/PermissionEditor';
 
 function ProtectedRoute({ children }) {
   const token = getToken();
@@ -77,17 +68,8 @@ export default function App() {
           <Route path="/config" element={<ConnectionConfig />} />
           <Route path="/tools" element={<ToolManager />} />
           <Route path="/tokens" element={<TokenManager />} />
-          <Route path="/model" element={<ModelManager />} />
-          <Route path="/skills" element={<SkillManager />} />
-          <Route path="/mcp-servers" element={<McpServerManager />} />
-          <Route path="/hermes-tools" element={<HermesToolsets />} />
-          <Route path="/config-editor" element={<ConfigEditor />} />
-          <Route path="/gateway" element={<GatewayControl />} />
-          <Route path="/sessions" element={<SessionManager />} />
-          <Route path="/cron" element={<CronManager />} />
-          <Route path="/webhooks" element={<WebhookManager />} />
           <Route path="/logs" element={<LogViewer />} />
-          <Route path="/deny-list" element={<DenyList />} />
+          <Route path="/permissions" element={<PermissionEditor />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

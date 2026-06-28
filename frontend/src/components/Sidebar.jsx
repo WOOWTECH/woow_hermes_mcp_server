@@ -10,14 +10,6 @@ import {
   Shield,
   Settings,
   LogOut,
-  Brain,
-  BookOpen,
-  Server,
-  FileText,
-  Power,
-  MessageSquare,
-  Clock,
-  Webhook,
   X,
 } from 'lucide-react';
 import { apiGet, clearToken } from '../api';
@@ -37,24 +29,10 @@ const navSections = [
     ],
   },
   {
-    label: 'Hermes Agent',
-    items: [
-      { to: '/model', label: 'Model', icon: Brain },
-      { to: '/skills', label: 'Skills', icon: BookOpen },
-      { to: '/mcp-servers', label: 'MCP Servers', icon: Server },
-      { to: '/hermes-tools', label: 'Toolsets', icon: Settings },
-      { to: '/config-editor', label: 'Config', icon: FileText },
-      { to: '/gateway', label: 'Gateway', icon: Power },
-      { to: '/sessions', label: 'Sessions', icon: MessageSquare },
-      { to: '/cron', label: 'Cron Jobs', icon: Clock },
-      { to: '/webhooks', label: 'Webhooks', icon: Webhook },
-    ],
-  },
-  {
     label: 'System',
     items: [
       { to: '/logs', label: 'Logs', icon: ScrollText },
-      { to: '/deny-list', label: 'Security', icon: Shield },
+      { to: '/permissions', label: 'Permissions', icon: Shield },
       { to: '/settings', label: 'Settings', icon: Settings },
     ],
   },
