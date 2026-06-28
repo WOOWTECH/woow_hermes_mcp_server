@@ -7,6 +7,12 @@ The process manager drains subprocess stdout into the Python logger;
 this module maintains a parallel ring buffer that captures those lines
 for search and SSE streaming.
 
+In addition to MCP subprocess output, a :class:`_AdminLogHandler` is
+installed on key application loggers so that all admin API activity
+(health checks, dashboard proxy calls, tool operations, httpx
+requests, uvicorn access logs, etc.) is captured into the same ring
+buffer and visible on the ``/logs`` page.
+
 Endpoints:
     GET /api/logs/stream   - SSE endpoint streaming MCP server logs
     GET /api/logs/search   - Search the in-memory log buffer
@@ -19,6 +25,7 @@ import collections
 import json
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
@@ -41,14 +48,29 @@ STREAM_TAIL_LINES = 100  # initial lines to send on SSE connect
 POLL_INTERVAL = 0.5  # seconds between buffer polls for SSE
 HEARTBEAT_INTERVAL = 15  # seconds between SSE heartbeat comments
 
+# Loggers whose output should be captured into the ring buffer.
+_CAPTURED_LOGGERS = (
+    "hermes_mcp_admin",
+    "mcp_admin_core",
+    "uvicorn.access",
+    "httpx",
+)
+
 
 # ---------------------------------------------------------------------------
 # In-memory log buffer (ring buffer)
 # ---------------------------------------------------------------------------
+#
+# We use a *threading* lock (not asyncio.Lock) because the buffer must be
+# writable from synchronous logging.Handler.emit() calls which may happen
+# on any thread.  The lock protects only a deque.append + integer increment
+# so it is held for nanoseconds and will never block the event loop in
+# practice.
+# ---------------------------------------------------------------------------
 
 _log_buffer: collections.deque[dict] = collections.deque(maxlen=LOG_BUFFER_SIZE)
-_buffer_lock = asyncio.Lock()
-_buffer_seq = 0  # monotonic sequence counter for change detection
+_buffer_lock = threading.Lock()
+_buffer_seq: int = 0  # monotonic sequence counter for change detection
 
 
 _LEVEL_RE = re.compile(r"\b(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\b", re.IGNORECASE)
@@ -67,26 +89,55 @@ def _extract_level(line: str) -> str:
     return "info"
 
 
-async def append_log_line(line: str, source: str = "mcp-server") -> None:
-    """Append a log line to the in-memory buffer.
+def _level_from_record(record: logging.LogRecord) -> str:
+    """Map a :class:`logging.LogRecord` level to our ring-buffer level string."""
+    if record.levelno >= logging.ERROR:
+        return "error"
+    if record.levelno >= logging.WARNING:
+        return "warning"
+    if record.levelno >= logging.INFO:
+        return "info"
+    return "debug"
 
-    Called by the log handler hook installed in ``main.py`` or by the
-    process manager log drainer.
+
+def _append_log_line_sync(
+    line: str,
+    source: str = "mcp-server",
+    level: str | None = None,
+) -> None:
+    """Synchronously append a log line to the in-memory buffer.
+
+    This is safe to call from any thread (including from within a
+    :class:`logging.Handler`).  The *level* parameter allows the caller
+    to supply a pre-computed level; when ``None`` the level is extracted
+    from the message text via :func:`_extract_level`.
     """
     global _buffer_seq  # noqa: PLW0603
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "level": _extract_level(line),
+        "level": level if level is not None else _extract_level(line),
         "source": source,
         "message": line.rstrip(),
     }
-    async with _buffer_lock:
+    with _buffer_lock:
         _log_buffer.append(entry)
         _buffer_seq += 1
 
 
+async def append_log_line(line: str, source: str = "mcp-server") -> None:
+    """Append a log line to the in-memory buffer (async wrapper).
+
+    Called by the log handler hook installed in ``main.py`` or by the
+    process manager log drainer.
+
+    Delegates to the synchronous :func:`_append_log_line_sync` which is
+    safe to call from any context.
+    """
+    _append_log_line_sync(line, source=source)
+
+
 # ---------------------------------------------------------------------------
-# Logging handler that feeds the ring buffer
+# Logging handler that feeds the ring buffer (MCP subprocess output)
 # ---------------------------------------------------------------------------
 
 
@@ -103,12 +154,7 @@ class _BufferLogHandler(logging.Handler):
             line = msg.split(self._MCP_PREFIX, 1)[-1]
         else:
             line = msg
-        # Schedule append in the running event loop
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(append_log_line(line, source="mcp-server"))
-        except RuntimeError:
-            pass  # no event loop -- skip
+        _append_log_line_sync(line, source="mcp-server")
 
 
 def install_log_capture() -> None:
@@ -128,8 +174,68 @@ def install_log_capture() -> None:
     proc_logger.addHandler(handler)
 
 
+# ---------------------------------------------------------------------------
+# Admin / application log handler
+# ---------------------------------------------------------------------------
+#
+# Captures log records from all interesting application loggers into the
+# same ring buffer so that API calls, health checks, proxy activity, httpx
+# requests, and uvicorn access logs are visible on the /logs page.
+# ---------------------------------------------------------------------------
+
+class _AdminLogHandler(logging.Handler):
+    """Captures application log records into the shared ring buffer.
+
+    Unlike :class:`_BufferLogHandler` (which is specialised for MCP
+    subprocess stdout), this handler captures *all* records from the
+    loggers listed in :data:`_CAPTURED_LOGGERS` and stores them with the
+    originating logger name as the ``source`` field.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            level = _level_from_record(record)
+            _append_log_line_sync(msg, source=record.name, level=level)
+        except Exception:
+            # logging.Handler contract: never raise from emit()
+            self.handleError(record)
+
+
+def _install_admin_log_capture() -> None:
+    """Install :class:`_AdminLogHandler` on every logger in
+    :data:`_CAPTURED_LOGGERS`.
+
+    Each logger's level is lowered to INFO (if higher) so that info-level
+    messages are not silently swallowed by the default WARNING threshold.
+
+    The handler itself is set to INFO so DEBUG-level noise is excluded.
+
+    This function is idempotent -- calling it multiple times will not add
+    duplicate handlers (it checks for an existing :class:`_AdminLogHandler`
+    first).
+    """
+    fmt = logging.Formatter("%(message)s")
+    for logger_name in _CAPTURED_LOGGERS:
+        target = logging.getLogger(logger_name)
+
+        # Skip if we already installed a handler on this logger.
+        if any(isinstance(h, _AdminLogHandler) for h in target.handlers):
+            continue
+
+        # Ensure the logger accepts INFO even if root is WARNING.
+        if target.level == logging.NOTSET or target.level > logging.INFO:
+            target.setLevel(logging.INFO)
+
+        handler = _AdminLogHandler()
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(fmt)
+        target.addHandler(handler)
+
+
 # Auto-install when the module is imported
 install_log_capture()
+_install_admin_log_capture()
 
 
 # ---------------------------------------------------------------------------
@@ -184,14 +290,12 @@ async def _sse_log_generator(
     Periodic SSE comment heartbeats (``:``) are sent to prevent proxies
     and load-balancers from killing idle connections.
     """
-    global _buffer_seq  # noqa: PLW0603
-
     # 0. Send a named "connected" event so the frontend can confirm the stream is alive.
     #    This is NOT a default "message" event -- the client must listen for event: connected.
     yield f"event: connected\ndata: {json.dumps({'status': 'connected'})}\n\n"
 
     # 1. Send tail of existing buffer
-    async with _buffer_lock:
+    with _buffer_lock:
         snapshot = list(_log_buffer)
         last_seq = _buffer_seq
 
@@ -208,7 +312,7 @@ async def _sse_log_generator(
             await asyncio.sleep(POLL_INTERVAL)
             polls_since_heartbeat += 1
 
-            async with _buffer_lock:
+            with _buffer_lock:
                 current_seq = _buffer_seq
                 if current_seq != last_seq:
                     # Calculate how many new entries appeared
@@ -278,7 +382,7 @@ async def search_logs(
     By default performs case-insensitive substring matching.
     Set ``regex=true`` to use the query as a regular expression pattern.
     """
-    async with _buffer_lock:
+    with _buffer_lock:
         buffer_snapshot = list(_log_buffer)
 
     total_buffered = len(buffer_snapshot)
