@@ -433,3 +433,184 @@ async def hermes_session(action: str = "list", session_id: str | None = None) ->
             return json.dumps({"ok": True, "deleted": session_id})
 
         return json.dumps({"error": f"Unknown action: {action}. Valid: list, get, delete"})
+
+
+# ---------------------------------------------------------------------------
+# Tool 10: hermes_cron
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def hermes_cron(
+    action: str = "list",
+    name: str | None = None,
+    schedule: str | None = None,
+    prompt: str | None = None,
+    enabled: bool = True,
+    job_id: str | None = None,
+) -> str:
+    """Manage Hermes cron/scheduled jobs.
+
+    Actions: list, create, update, delete, trigger, pause, resume
+    - list: show all cron jobs
+    - create: new job (requires name, schedule, prompt)
+    - update: modify job (requires job_id, plus fields to change)
+    - delete: remove job (requires job_id)
+    - trigger: run job now (requires job_id)
+    - pause / resume: toggle job state (requires job_id)
+
+    schedule uses cron syntax: '0 9 * * 1-5' = weekdays at 9am
+    """
+    conn = _get_connection()
+
+    async with await _get_dashboard_client(conn) as client:
+        if action == "list":
+            resp = await client.get("/api/cron/jobs")
+            resp.raise_for_status()
+            jobs = resp.json()
+            if isinstance(jobs, list):
+                summary = []
+                for j in jobs:
+                    if isinstance(j, dict):
+                        summary.append({
+                            "id": j.get("id"),
+                            "name": j.get("name"),
+                            "schedule": j.get("schedule", {}).get("expr") if isinstance(j.get("schedule"), dict) else j.get("schedule"),
+                            "prompt": (j.get("prompt") or "")[:80],
+                            "enabled": j.get("enabled"),
+                            "state": j.get("state"),
+                            "next_run": j.get("next_run_at"),
+                        })
+                return json.dumps({"total": len(summary), "jobs": summary}, indent=2, default=str)
+            return json.dumps(jobs, indent=2, default=str)
+
+        if action == "create":
+            if not name or not schedule or not prompt:
+                return json.dumps({"error": "name, schedule, and prompt are all required"})
+            resp = await client.post("/api/cron/jobs", json={
+                "name": name, "schedule": schedule, "prompt": prompt, "enabled": enabled,
+            })
+            resp.raise_for_status()
+            data = resp.json()
+            return json.dumps({
+                "ok": True, "id": data.get("id"), "name": data.get("name"),
+                "schedule": data.get("schedule", {}).get("expr") if isinstance(data.get("schedule"), dict) else schedule,
+                "next_run": data.get("next_run_at"),
+            }, indent=2, default=str)
+
+        if action == "update":
+            if not job_id:
+                return json.dumps({"error": "job_id required for update"})
+            updates: dict[str, Any] = {}
+            if prompt is not None:
+                updates["prompt"] = prompt
+            if schedule is not None:
+                updates["schedule"] = schedule
+            if name is not None:
+                updates["name"] = name
+            if not updates:
+                return json.dumps({"error": "provide at least one field to update (prompt, schedule, name)"})
+            resp = await client.put(f"/api/cron/jobs/{job_id}", json={"updates": updates})
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "updated": job_id}, indent=2)
+
+        if action == "delete":
+            if not job_id:
+                return json.dumps({"error": "job_id required"})
+            resp = await client.delete(f"/api/cron/jobs/{job_id}")
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "deleted": job_id})
+
+        if action == "trigger":
+            if not job_id:
+                return json.dumps({"error": "job_id required"})
+            resp = await client.post(f"/api/cron/jobs/{job_id}/trigger")
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "triggered": job_id})
+
+        if action == "pause":
+            if not job_id:
+                return json.dumps({"error": "job_id required"})
+            resp = await client.post(f"/api/cron/jobs/{job_id}/pause")
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "paused": job_id})
+
+        if action == "resume":
+            if not job_id:
+                return json.dumps({"error": "job_id required"})
+            resp = await client.post(f"/api/cron/jobs/{job_id}/resume")
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "resumed": job_id})
+
+        return json.dumps({"error": f"Unknown action: {action}. Valid: list, create, update, delete, trigger, pause, resume"})
+
+
+# ---------------------------------------------------------------------------
+# Tool 11: hermes_webhook
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def hermes_webhook(
+    action: str = "list",
+    name: str | None = None,
+    prompt: str | None = None,
+    enabled: bool = True,
+) -> str:
+    """Manage Hermes webhooks.
+
+    Actions: list, enable_platform, create, delete, toggle
+    - list: show webhook platform status and subscriptions
+    - enable_platform: enable the webhook listener (triggers gateway restart)
+    - create: new webhook (requires name, prompt). Use {{payload}} in prompt for incoming data
+    - delete: remove webhook (requires name)
+    - toggle: enable/disable webhook (requires name, set enabled=true/false)
+
+    Example prompt: 'New order received: {{payload}}. Summarize the order details.'
+    """
+    conn = _get_connection()
+
+    async with await _get_dashboard_client(conn) as client:
+        if action == "list":
+            resp = await client.get("/api/webhooks")
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict):
+                subs = data.get("subscriptions", [])
+                return json.dumps({
+                    "platform_enabled": data.get("enabled", False),
+                    "base_url": data.get("base_url", ""),
+                    "total": len(subs),
+                    "webhooks": [{"name": w.get("name"), "enabled": w.get("enabled"), "prompt": (w.get("prompt") or "")[:80]} for w in subs if isinstance(w, dict)],
+                }, indent=2)
+            return json.dumps(data, indent=2, default=str)
+
+        if action == "enable_platform":
+            resp = await client.post("/api/webhooks/enable", json={})
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "message": "Webhook platform enabled. Gateway will restart."})
+
+        if action == "create":
+            if not name or not prompt:
+                return json.dumps({"error": "name and prompt are required. Use {{payload}} for incoming data."})
+            resp = await client.post("/api/webhooks", json={
+                "name": name, "prompt": prompt, "enabled": enabled,
+            })
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "name": name, "created": True})
+
+        if action == "delete":
+            if not name:
+                return json.dumps({"error": "name required"})
+            resp = await client.delete(f"/api/webhooks/{name}")
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "deleted": name})
+
+        if action == "toggle":
+            if not name:
+                return json.dumps({"error": "name required"})
+            resp = await client.put(f"/api/webhooks/{name}/enabled", json={"enabled": enabled})
+            resp.raise_for_status()
+            return json.dumps({"ok": True, "name": name, "enabled": enabled})
+
+        return json.dumps({"error": f"Unknown action: {action}. Valid: list, enable_platform, create, delete, toggle"})
