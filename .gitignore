@@ -7,3 +7,18 @@ dist/
 .env.local
 *.egg-info/
 /data/
+
+# Real secrets must never be committed - only charts/*/examples/secrets.example.yaml.
+# Patterns are anchored to the repo root (leading /) on purpose: an unanchored
+# "secrets.yaml" would also match charts/hermes-mcp/templates/secrets.yaml and
+# silently keep the chart's own Secret template out of git.
+/secrets.yaml
+/*-secrets.yaml
+/*.secret.yaml
+/*secrets.values.yaml
+/*.local.yaml
+!/charts/hermes-mcp/templates/secrets.yaml
+!/charts/hermes-mcp/examples/secrets.example.yaml
+
+# Packaged charts
+*.tgz

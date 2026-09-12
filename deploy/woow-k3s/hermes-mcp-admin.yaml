@@ -1,0 +1,101 @@
+# Instance values for the release that already runs on woow-k3s:
+#   release hermes-mcp-admin, namespace hermes-mcp-admin
+#
+# Rendering charts/hermes-mcp with this file reproduces the live objects
+# field-by-field, so `helm upgrade --install --take-ownership` adopts them
+# without rolling anything. Every safety default of the chart that would rewrite
+# the live pod template is switched back off here and listed under "Follow-ups"
+# in charts/hermes-mcp/README.md.
+#
+# No secret material in this file. The two inline credentials the live pod
+# template carries (HERMES_GATEWAY_API_KEY, HERMES_DASHBOARD_PASSWORD) are left
+# empty and supplied at takeover time straight from the live Secret - see
+# "Takeover" in charts/hermes-mcp/README.md.
+
+namespace:
+  # The release namespace equals namespace.name, so no Namespace object is
+  # rendered and `helm uninstall` can never delete it.
+  create: true
+  name: hermes-mcp-admin
+
+name: hermes-mcp-admin
+
+# The instance is parked at 0 replicas and must stay there: the endpoint
+# hermes-mcp-admin.woowtech.io is routed but intentionally not served.
+replicaCount: 0
+
+# Live objects carry no labels of their own. Adding the standard labels would
+# rewrite live object metadata for no operational gain - follow-up.
+commonLabels: null
+
+# Part of the live pod template (a `kubectl rollout restart` from 2026-06-27).
+# Dropping it changes the pod-template hash and creates a new ReplicaSet.
+podAnnotations:
+  kubectl.kubernetes.io/restartedAt: "2026-06-27T18:48:20+08:00"
+
+# Live strategy. Recreate (the chart default) is the correct setting for the
+# ReadWriteOnce PVC, but it is a live-object change - follow-up.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%
+    maxUnavailable: 25%
+
+# The live pod template has no probes. Enabling them rewrites it - follow-up.
+probes:
+  enabled: false
+
+image:
+  repository: python
+  tag: "3.12-slim"
+  pullPolicy: IfNotPresent
+
+# Live behaviour: the default branch is installed at every pod start. Pinning a
+# ref is the reproducibility fix and rewrites the pod template - follow-up.
+bootstrap:
+  repoUrl: https://github.com/WOOWTECH/woow_hermes_mcp_server.git
+  ref: ""
+
+service:
+  type: ClusterIP
+  port: 9003
+  targetPort: 8080
+
+persistence:
+  enabled: true
+  claimName: hermes-mcp-admin-data
+  # longhorn has reclaimPolicy Retain; the PVC also carries
+  # helm.sh/resource-policy: keep through keepOnUninstall.
+  storageClassName: longhorn
+  accessMode: ReadWriteOnce
+  size: 1Gi
+
+existingSecret: hermes-mcp-secrets
+secrets:
+  # The Secret already exists and is NOT part of this release.
+  create: false
+
+hermes:
+  gateway:
+    url: http://hermes-agent-svc.hermes.svc.cluster.local:8642
+    # Supplied at takeover time from the live Secret; never committed.
+    apiKey: ""
+    apiKeySecretKey: HERMES_GATEWAY_API_KEY
+  dashboard:
+    url: http://hermes-agent-svc.hermes.svc.cluster.local:9119
+    username: admin
+    # Supplied at takeover time from the live Secret; never committed.
+    password: ""
+    passwordSecretKey: HERMES_DASHBOARD_PASSWORD
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+tests:
+  # No smoke pod for this instance: it runs at 0 replicas, so /healthz is dead.
+  enabled: false

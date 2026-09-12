@@ -394,27 +394,34 @@ docker compose up -d
 # MCP 端點：http://localhost:9003/private_{token}/sse
 ```
 
-### 方式二：Kubernetes (K3s) 部署
+### 方式二：Kubernetes (K3s) 部署 -- Helm chart
+
+chart 位於 [`charts/hermes-mcp`](charts/hermes-mcp/)，取代原本根目錄的
+`k8s-deploy.yaml`。舊 manifest 跟任何線上部署都不相符：它寫死客戶的 namespace、
+把容器埠寫成 9003（實際是 8080，因此 probe 與 Service 都沒有可用的 endpoint），
+還對該 namespace 授予 `secrets get/list/patch`，而程式碼根本不呼叫 Kubernetes API。
 
 ```bash
-# 建立命名空間
-kubectl create namespace hermes-mcp-admin
+# 1. chart 引用的 Secret（範本含五個 key 與佔位值）
+#    charts/hermes-mcp/examples/secrets.example.yaml
+kubectl --context woow-k3s -n hermes-mcp-admin apply -f /secure/path/hermes-mcp-secrets.yaml
 
-# 建立 Secret（連線憑證）
-kubectl create secret generic hermes-mcp-admin-env \
-  -n hermes-mcp-admin \
-  --from-literal=HERMES_GATEWAY_URL=http://hermes:8642 \
-  --from-literal=HERMES_GATEWAY_API_KEY=your-api-key \
-  --from-literal=HERMES_DASHBOARD_URL=http://hermes:9119 \
-  --from-literal=HERMES_DASHBOARD_USERNAME=admin \
-  --from-literal=HERMES_DASHBOARD_PASSWORD=your-password
+# 2. 安裝（一個 instance 一個 release；instance values 放 deploy/<cluster>/<release>.yaml）
+helm install hermes-mcp-admin ./charts/hermes-mcp \
+  -n hermes-mcp-admin --create-namespace \
+  -f deploy/woow-k3s/hermes-mcp-admin.yaml
 
-# 部署
-kubectl apply -f k8s-deploy.yaml -n hermes-mcp-admin
-
-# 驗證
-kubectl get pods -n hermes-mcp-admin
+# 3. 驗證
+kubectl -n hermes-mcp-admin rollout status deploy/hermes-mcp-admin --timeout=15m
+helm test hermes-mcp-admin -n hermes-mcp-admin --logs
 ```
+
+chart 會建立 Deployment、ClusterIP Service（9003 -> 容器 8080）、`/data` 用的 PVC，
+以及（僅在 `secrets.create=true` 時）Secret。`helm uninstall` 不會刪除 namespace、
+PVC 與 chart 建立的 Secret，所以 `/data/config.json` 裡的管理密碼與 MCP token 都會保留。
+
+完整 values 說明、woow-k3s 既有 instance 的接管（takeover）步驟，以及刻意保持關閉的
+後續改善項目，請見 [charts/hermes-mcp/README.zh-TW.md](charts/hermes-mcp/README.zh-TW.md)。
 
 ### 方式三：本機開發
 

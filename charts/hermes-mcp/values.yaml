@@ -1,0 +1,167 @@
+# Default values for the hermes-mcp chart.
+#
+# One release per instance. The defaults describe a NEW install (probes on,
+# Recreate strategy, credentials read from an existing Secret). The instance
+# that is already running on woow-k3s is described by
+# deploy/woow-k3s/hermes-mcp-admin.yaml, which turns the safety fixes that
+# would rewrite its pod template back off so a takeover changes nothing.
+
+namespace:
+  # Render the Namespace object. A namespace equal to the release namespace
+  # (`-n`) is never rendered - create it with --create-namespace instead - so
+  # `helm uninstall` can never delete the namespace the release lives in.
+  create: true
+  name: hermes-mcp-admin
+
+# Add `helm.sh/resource-policy: keep` to the Namespace, the PVC and
+# chart-created Secrets, so `helm uninstall` never deletes /data/config.json
+# (admin password, MCP auth token, tool toggles) or the Secret behind it.
+keepOnUninstall: true
+
+# Object names and the pod selector label. The selector is immutable and the
+# Service name is what the Cloudflare route points at: do not change this on an
+# existing install.
+name: hermes-mcp-admin
+
+# Labels added to object metadata (NOT to the pod template: changing pod labels
+# rolls the Deployment). Set to {} to leave live object metadata untouched.
+commonLabels:
+  app.kubernetes.io/name: hermes-mcp-admin
+  app.kubernetes.io/part-of: woow-hermes
+
+# Annotations for the pod template. Changing these changes the pod-template
+# hash and therefore rolls the Deployment - keep whatever the live pods have.
+podAnnotations: {}
+
+replicaCount: 1
+
+# Deployment strategy. Recreate is the correct default: /data is a ReadWriteOnce
+# PVC, so a rolling update would leave the new pod stuck waiting for the volume.
+strategy:
+  type: Recreate
+
+image:
+  repository: python
+  tag: "3.12-slim"
+  pullPolicy: IfNotPresent
+
+# How the application gets into the stock python image. The container installs
+# the package from git and builds the SPA on every start; this is the runtime
+# model of the running instance and is kept on purpose (phase 1 does not switch
+# to a built image - see README "Follow-ups").
+bootstrap:
+  repoUrl: https://github.com/WOOWTECH/woow_hermes_mcp_server.git
+  # Git ref to pin (tag, branch or commit). "" = the default branch, i.e.
+  # whatever main holds at the moment the pod starts. Pin it for reproducibility.
+  ref: ""
+  # Replace the generated start script entirely (escape hatch; leave empty).
+  scriptOverride: ""
+
+service:
+  type: ClusterIP
+  # Port the Service listens on. 9003 is the port the docker-compose mapping and
+  # the Cloudflare route use; the container itself always listens on targetPort.
+  port: 9003
+  targetPort: 8080
+
+persistence:
+  enabled: true
+  # PVC name. /data holds config.json: the admin password, the MCP auth token,
+  # the connection settings and every tool toggle.
+  claimName: hermes-mcp-admin-data
+  # "" = cluster default StorageClass. longhorn (Retain) on woow-k3s,
+  # longhorn-delete for test installs, local-path on the laptop cluster.
+  storageClassName: longhorn
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  # Use an existing PVC instead of rendering one (it is then not part of the
+  # release and `helm uninstall` can never touch it).
+  existingClaim: ""
+
+# Secret holding the console's own credentials. The chart only references it.
+existingSecret: hermes-mcp-secrets
+
+secrets:
+  # false (default): the Secret already exists (see examples/secrets.example.yaml)
+  #   and the chart never renders it, so an upgrade cannot overwrite live values.
+  # true: render it from the values below (fresh installs and tests only).
+  create: false
+  # All five are required() when create=true - there are no defaults on purpose.
+  adminPassword: ""
+  jwtSecret: ""
+  mcpAuthToken: ""
+  gatewayApiKey: ""
+  dashboardPassword: ""
+
+# Upstream Hermes Agent. The URLs and the username are not secret and are
+# rendered as plain env values; the API key and the dashboard password are read
+# from `existingSecret` unless an inline value is supplied (see README).
+hermes:
+  gateway:
+    url: http://hermes-agent-svc.hermes.svc.cluster.local:8642
+    # Inline plaintext value. Leave empty to use existingSecret/apiKeySecretKey.
+    apiKey: ""
+    apiKeySecretKey: HERMES_GATEWAY_API_KEY
+  dashboard:
+    url: http://hermes-agent-svc.hermes.svc.cluster.local:9119
+    username: admin
+    # Inline plaintext value. Leave empty to use existingSecret/passwordSecretKey.
+    password: ""
+    passwordSecretKey: HERMES_DASHBOARD_PASSWORD
+
+# Path of the config file on the PVC.
+configPath: /data/config.json
+
+# Extra env entries appended verbatim, e.g.
+#   - name: JWT_EXPIRY_HOURS
+#     value: "12"
+extraEnv: []
+
+# /healthz probes. Off for the running instance: adding probes rewrites its pod
+# template. The startup probe covers the slow first boot (apt-get, pip install
+# from git and an npm build before uvicorn binds).
+probes:
+  enabled: true
+  startup:
+    periodSeconds: 10
+    failureThreshold: 90
+  readiness:
+    periodSeconds: 10
+    failureThreshold: 6
+  liveness:
+    periodSeconds: 20
+    failureThreshold: 6
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# The bootstrap runs apt-get and npm as root, so it cannot run with
+# runAsNonRoot or a read-only root filesystem. Both are empty on purpose;
+# hardening them needs a built image first (see README "Follow-ups").
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+serviceAccount:
+  # The application never talks to the Kubernetes API (it has no kubernetes
+  # dependency), so it runs with the namespace default ServiceAccount and the
+  # chart ships no Role: the old k8s-deploy.yaml granted secrets get/list/patch
+  # over a customer namespace for nothing.
+  create: false
+  name: ""
+  # Mount the SA token into the pod. false is safer and matches nothing the app
+  # needs; it is not turned on for the live instance because it rewrites the pod
+  # template.
+  automount: true
+
+tests:
+  # Read-only `helm test` pod: GET /healthz through the Service.
+  enabled: true

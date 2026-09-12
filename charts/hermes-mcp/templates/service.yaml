@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hermes-mcp.name" . }}
+  namespace: {{ include "hermes-mcp.ns" . }}
+  {{- with (include "hermes-mcp.labels" .) }}
+  labels:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+  selector:
+    {{- include "hermes-mcp.selectorLabels" . | nindent 4 }}

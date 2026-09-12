@@ -1,0 +1,30 @@
+Hermes MCP Admin ({{ .Chart.AppVersion }}) - release {{ .Release.Name }} in namespace {{ include "hermes-mcp.ns" . }}
+{{- if not .Values.secrets.create }}
+
+The Secret {{ .Values.existingSecret }} is NOT managed by this release
+(secrets.create=false). It must already exist - see examples/secrets.example.yaml.
+{{- end }}
+{{- if eq (int .Values.replicaCount) 0 }}
+
+replicaCount is 0: nothing will start. Scale it up with
+  helm upgrade {{ .Release.Name }} . -n {{ .Release.Namespace }} --set replicaCount=1
+{{- else }}
+
+First boot is slow: the container runs apt-get, installs the package from
+{{ .Values.bootstrap.repoUrl }}{{ if .Values.bootstrap.ref }} at {{ .Values.bootstrap.ref }}{{ end }} and builds the SPA before uvicorn binds.
+  kubectl -n {{ include "hermes-mcp.ns" . }} rollout status deploy/{{ include "hermes-mcp.name" . }} --timeout=15m
+
+FIRST INSTALL: the application ignores ADMIN_PASSWORD and seeds /data/config.json
+with the password "admin". Log in with admin, change it in Settings, and only
+then route traffic to the Service.
+
+Verify:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }} --logs
+  kubectl -n {{ include "hermes-mcp.ns" . }} run curl --rm -it --image=curlimages/curl --restart=Never -- \
+    -sS {{ include "hermes-mcp.healthUrl" . }}
+{{- end }}
+{{- if not .Values.bootstrap.ref }}
+
+bootstrap.ref is empty: every restart installs whatever the default branch of
+{{ .Values.bootstrap.repoUrl }} holds at that moment. Pin a tag or commit for reproducibility.
+{{- end }}
