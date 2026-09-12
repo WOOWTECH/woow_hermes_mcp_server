@@ -391,31 +391,44 @@ docker compose up -d
 # MCP endpoint:  http://localhost:9003/private_{token}/sse
 ```
 
-### Option 2: Kubernetes (K3s/K8s)
+### Option 2: Kubernetes (K3s/K8s) -- Helm chart
+
+The chart lives in [`charts/hermes-mcp`](charts/hermes-mcp/) and replaces the old
+root `k8s-deploy.yaml`, which never matched any running instance (it hardcoded a
+customer namespace, exposed the container on port 9003 instead of 8080 -- so the
+probes and the Service had no working endpoint -- and granted the pod
+`secrets get/list/patch` on that namespace for code that never calls Kubernetes).
 
 ```bash
-# Create the namespace secret with Hermes credentials
-kubectl create secret generic hermes-mcp-secrets \
-  --namespace=kasim-odoo \
-  --from-literal=gateway-url=http://hermes-agent-svc:8642 \
-  --from-literal=gateway-api-key=YOUR_API_KEY \
-  --from-literal=dashboard-url=http://hermes-agent-svc:9119 \
-  --from-literal=dashboard-username=admin \
-  --from-literal=dashboard-password=YOUR_PASSWORD
+# 1. The Secret the chart references (placeholders + all five keys):
+#    charts/hermes-mcp/examples/secrets.example.yaml
+kubectl --context woow-k3s -n hermes-mcp-admin apply -f /secure/path/hermes-mcp-secrets.yaml
 
-# Deploy
-kubectl apply -f k8s-deploy.yaml
+# 2. Install (one release per instance; values live in deploy/<cluster>/<release>.yaml)
+helm install hermes-mcp-admin ./charts/hermes-mcp \
+  -n hermes-mcp-admin --create-namespace \
+  -f deploy/woow-k3s/hermes-mcp-admin.yaml
 
-# Verify
-kubectl get pods -n kasim-odoo -l app=hermes-mcp-admin
-kubectl logs -n kasim-odoo -l app=hermes-mcp-admin -f
+# or from the GitHub tarball, without a git clone (the chart is in a
+# subdirectory, so the tarball is extracted first)
+curl -sSL https://github.com/WOOWTECH/woow_hermes_mcp_server/archive/refs/heads/main.tar.gz | tar xz
+helm install hermes-mcp-admin woow_hermes_mcp_server-main/charts/hermes-mcp \
+  -n hermes-mcp-admin --create-namespace \
+  -f woow_hermes_mcp_server-main/deploy/woow-k3s/hermes-mcp-admin.yaml
+
+# 3. Verify
+kubectl -n hermes-mcp-admin rollout status deploy/hermes-mcp-admin --timeout=15m
+helm test hermes-mcp-admin -n hermes-mcp-admin --logs
 ```
 
-The K8s deployment includes:
-- **ServiceAccount** with RBAC for secrets, configmaps, pods, and deployments
-- **Deployment** with readiness and liveness probes on `/healthz`
-- **ClusterIP Service** on port 9003
-- Resource limits: 100m-500m CPU, 128Mi-512Mi memory
+The chart renders a Deployment, a ClusterIP Service (9003 -> container 8080), a
+PVC for `/data` and -- only with `secrets.create=true` -- the Secret. `helm
+uninstall` keeps the namespace, the PVC and chart-created Secrets, so the admin
+password and the MCP auth token in `/data/config.json` survive it.
+
+See [charts/hermes-mcp/README.md](charts/hermes-mcp/README.md) for every value,
+the takeover procedure for the instance already running on woow-k3s, and the
+follow-ups that are deliberately left switched off there.
 
 ### Option 3: Development Setup
 
@@ -742,7 +755,8 @@ woow_hermes_mcp_server/
 ├── docs/screenshots/        # 16 screenshots
 ├── Dockerfile               # Multi-stage Node 20 + Python 3.12
 ├── docker-compose.yml       # Docker Compose config
-├── k8s-deploy.yaml          # K8s manifests (RBAC + Deploy + Service)
+├── charts/hermes-mcp/       # Helm chart (Deployment + Service + PVC + Secret)
+├── deploy/woow-k3s/         # Instance values per release (no secrets)
 ├── deny-list.yaml           # Security deny-list
 ├── pyproject.toml           # Python project config
 └── .env.example             # Environment variable template

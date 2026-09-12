@@ -1,0 +1,45 @@
+{{- /*
+`helm test` smoke pod, read-only: GET /healthz through the Service and check
+the JSON body. It never logs in and never touches /data.
+*/ -}}
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-smoke
+  namespace: {{ include "hermes-mcp.ns" . }}
+  {{- with (include "hermes-mcp.labels" .) }}
+  labels:
+    {{- . | nindent 4 }}
+  {{- end }}
+  annotations:
+    helm.sh/hook: test
+    # Kept until the next `helm test` so `helm test --logs` can always read it.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  containers:
+    - name: smoke
+      image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+      command: [python, -c]
+      args:
+        - |
+          import json, os, urllib.request
+          url = os.environ["HEALTH_URL"]
+          with urllib.request.urlopen(url, timeout=30) as r:
+              status, body = r.status, r.read().decode()
+          assert status == 200, (url, status)
+          assert json.loads(body).get("status") == "ok", body
+          print("healthz:", body.strip())
+          print("SMOKE OK")
+      env:
+        - name: HEALTH_URL
+          value: {{ include "hermes-mcp.healthUrl" . | quote }}
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 500m
+          memory: 128Mi
+{{- end }}

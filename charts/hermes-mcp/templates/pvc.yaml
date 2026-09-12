@@ -1,0 +1,26 @@
+{{- /*
+/data holds config.json: the admin password, the MCP auth token, the upstream
+connection and every tool toggle. It survives `helm uninstall` through
+keepOnUninstall, and is skipped entirely when persistence.existingClaim is set.
+*/ -}}
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.persistence.claimName }}
+  namespace: {{ include "hermes-mcp.ns" . }}
+  {{- with (include "hermes-mcp.labels" .) }}
+  labels:
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- include "hermes-mcp.keepAnnotations" . | nindent 2 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

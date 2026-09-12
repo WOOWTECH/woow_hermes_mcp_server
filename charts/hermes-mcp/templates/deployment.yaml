@@ -1,0 +1,134 @@
+{{- /*
+Hermes MCP Admin. A stock python:3.12-slim image that installs the package from
+git and builds the SPA on every start (see "hermes-mcp.startScript"), which is
+how the running instance works - phase 1 keeps that runtime model.
+
+The pod template is deliberately conservative: the selector label, the single
+`app` pod label and the pod annotations are the only labels the pods carry,
+because any change to the pod template rolls the Deployment.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hermes-mcp.name" . }}
+  namespace: {{ include "hermes-mcp.ns" . }}
+  {{- with (include "hermes-mcp.labels" .) }}
+  labels:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hermes-mcp.selectorLabels" . | nindent 6 }}
+  strategy:
+    {{- toYaml .Values.strategy | nindent 4 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hermes-mcp.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.serviceAccount.name }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      {{- if not .Values.serviceAccount.automount }}
+      automountServiceAccountToken: false
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: admin
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+          args:
+            - {{ include "hermes-mcp.startScript" . | quote }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: HERMES_GATEWAY_URL
+              value: {{ .Values.hermes.gateway.url | quote }}
+            {{- include "hermes-mcp.secretEnv" (list . "HERMES_GATEWAY_API_KEY" .Values.hermes.gateway.apiKey .Values.hermes.gateway.apiKeySecretKey) | nindent 12 }}
+            - name: HERMES_DASHBOARD_URL
+              value: {{ .Values.hermes.dashboard.url | quote }}
+            - name: HERMES_DASHBOARD_USERNAME
+              value: {{ .Values.hermes.dashboard.username | quote }}
+            {{- include "hermes-mcp.secretEnv" (list . "HERMES_DASHBOARD_PASSWORD" .Values.hermes.dashboard.password .Values.hermes.dashboard.passwordSecretKey) | nindent 12 }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: ADMIN_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: JWT_SECRET
+            - name: MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: MCP_AUTH_TOKEN
+            - name: MCP_ADMIN_CONFIG
+              value: {{ .Values.configPath | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.probes.enabled }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.service.targetPort }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.service.targetPort }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.service.targetPort }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ dir .Values.configPath }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "hermes-mcp.pvcName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

@@ -1,0 +1,129 @@
+name: chart
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    working-directory: charts/hermes-mcp
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.19.5
+
+      - name: helm lint
+        run: helm lint .
+
+      - name: helm template (every values combination)
+        run: |
+          S="secrets.create=true,secrets.adminPassword=x,secrets.jwtSecret=x,secrets.mcpAuthToken=x,secrets.gatewayApiKey=x,secrets.dashboardPassword=x"
+          helm template hermes-mcp . -n hermes-mcp-admin              > /tmp/production.yaml
+          helm template hermes-mcp .                                  > /tmp/default-ns.yaml
+          helm template hermes-mcp . -n hermes-mcp-admin --set "$S"   > /tmp/secrets.yaml
+          helm template hermes-mcp-admin . -n hermes-mcp-admin \
+            -f ../../deploy/woow-k3s/hermes-mcp-admin.yaml            > /tmp/live-instance.yaml
+          helm template hermes-mcp . -n hermes-mcp-admin \
+            --set persistence.enabled=false,probes.enabled=false,tests.enabled=false,namespace.create=false \
+                                                                      > /tmp/minimal.yaml
+
+      - name: kubeconform (schema validation)
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xz -C /usr/local/bin kubeconform
+          kubeconform -strict -summary /tmp/production.yaml /tmp/default-ns.yaml \
+            /tmp/secrets.yaml /tmp/live-instance.yaml /tmp/minimal.yaml
+
+      - name: Required secrets are enforced
+        run: |
+          if helm template hermes-mcp . --set secrets.create=true > /dev/null 2>&1; then
+            echo "secrets.create=true rendered without any secret values"; exit 1
+          fi
+          echo "required() guards fire"
+          # The Secret must render; catches templates/secrets.yaml going missing from git.
+          n=$(grep -c '^kind: Secret$' /tmp/secrets.yaml || true)
+          [ "$n" -eq 1 ] || { echo "expected 1 Secret with secrets.create=true, got $n"; exit 1; }
+          # Every template must be present in the checkout (an unanchored
+          # .gitignore pattern once dropped a whole template silently).
+          for t in _helpers.tpl namespace.yaml deployment.yaml service.yaml pvc.yaml secrets.yaml NOTES.txt tests/smoke.yaml; do
+            test -f "templates/$t" || { echo "missing templates/$t"; exit 1; }
+          done
+          echo "all templates present, secrets.create=true renders the Secret"
+
+      - name: No secrets committed
+        run: |
+          pip install --quiet pyyaml
+          python3 - <<'EOF'
+          import sys, yaml
+          bad = []
+          v = yaml.safe_load(open("values.yaml"))
+          for k, x in v["secrets"].items():
+              if k != "create" and x:
+                  bad.append(f"values.yaml secrets.{k} must be empty")
+          if v["hermes"]["gateway"]["apiKey"] or v["hermes"]["dashboard"]["password"]:
+              bad.append("values.yaml must not carry inline hermes credentials")
+          for d in yaml.safe_load_all(open("/tmp/production.yaml")):
+              if d and d["kind"] == "Secret":
+                  bad.append("default render must not contain a Secret (secrets.create=false)")
+          for d in yaml.safe_load_all(open("examples/secrets.example.yaml")):
+              for k, x in ((d or {}).get("stringData") or {}).items():
+                  if "REPLACE_ME" not in str(x):
+                      bad.append(f"examples: {d['metadata']['name']}.{k} is not a placeholder")
+          # Instance values carry no credentials and no chart-created Secret.
+          iv = yaml.safe_load(open("../../deploy/woow-k3s/hermes-mcp-admin.yaml"))
+          if iv["hermes"]["gateway"]["apiKey"] or iv["hermes"]["dashboard"]["password"]:
+              bad.append("deploy/woow-k3s/hermes-mcp-admin.yaml must not carry credentials")
+          if iv["secrets"]["create"]:
+              bad.append("deploy/woow-k3s/hermes-mcp-admin.yaml must keep secrets.create=false")
+          sys.exit("\n".join(bad)) if bad else print("no secrets committed")
+          EOF
+
+      - name: Live instance render still matches the adopted objects
+        run: |
+          python3 - <<'EOF'
+          import sys, yaml
+          docs = {(d["kind"], d["metadata"]["name"]): d
+                  for d in yaml.safe_load_all(open("/tmp/live-instance.yaml")) if d}
+          bad = []
+          if ("Namespace", "hermes-mcp-admin") in docs:
+              bad.append("the release namespace must never be rendered as an object")
+          dep = docs[("Deployment", "hermes-mcp-admin")]
+          spec, tpl = dep["spec"], dep["spec"]["template"]
+          c = tpl["spec"]["containers"][0]
+          if spec["replicas"] != 0:
+              bad.append("the woow-k3s instance is parked at 0 replicas")
+          if dep["metadata"].get("labels"):
+              bad.append("live objects carry no labels of their own")
+          if tpl["metadata"]["labels"] != {"app": "hermes-mcp-admin"}:
+              bad.append("pod labels must stay exactly {app: hermes-mcp-admin}")
+          if tpl["metadata"]["annotations"] != {
+                  "kubectl.kubernetes.io/restartedAt": "2026-06-27T18:48:20+08:00"}:
+              bad.append("the live restartedAt pod annotation must be preserved")
+          if spec["strategy"]["type"] != "RollingUpdate":
+              bad.append("live strategy is RollingUpdate")
+          if any(k in c for k in ("livenessProbe", "readinessProbe", "startupProbe")):
+              bad.append("the live pod template has no probes")
+          names = [e["name"] for e in c["env"]]
+          if names != ["HERMES_GATEWAY_URL", "HERMES_GATEWAY_API_KEY",
+                       "HERMES_DASHBOARD_URL", "HERMES_DASHBOARD_USERNAME",
+                       "HERMES_DASHBOARD_PASSWORD", "ADMIN_PASSWORD", "JWT_SECRET",
+                       "MCP_AUTH_TOKEN", "MCP_ADMIN_CONFIG"]:
+              bad.append(f"env order/name drift: {names}")
+          if c["ports"] != [{"containerPort": 8080, "protocol": "TCP"}]:
+              bad.append("container port must stay 8080 (the app's uvicorn port)")
+          svc = docs[("Service", "hermes-mcp-admin")]["spec"]["ports"]
+          if svc != [{"port": 9003, "targetPort": 8080, "protocol": "TCP"}]:
+              bad.append(f"service ports drift: {svc}")
+          sys.exit("\n".join(bad)) if bad else print("live instance render unchanged")
+          EOF
+
+      - name: Shell scripts parse
+        run: bash -n scripts/*.sh
