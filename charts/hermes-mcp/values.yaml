@@ -11,7 +11,7 @@ namespace:
   # (`-n`) is never rendered - create it with --create-namespace instead - so
   # `helm uninstall` can never delete the namespace the release lives in.
   create: true
-  name: hermes-mcp-admin
+  name: ""
 
 # Add `helm.sh/resource-policy: keep` to the Namespace, the PVC and
 # chart-created Secrets, so `helm uninstall` never deletes /data/config.json
