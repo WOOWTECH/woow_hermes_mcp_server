@@ -12,12 +12,9 @@
 # empty and supplied at takeover time straight from the live Secret - see
 # "Takeover" in charts/hermes-mcp/README.md.
 
-namespace:
-  # The release namespace equals namespace.name, so no Namespace object is
-  # rendered and `helm uninstall` can never delete it.
-  create: true
-  name: hermes-mcp-admin
-
+# SAFETY: do NOT set `namespace:` here. Placement is controlled entirely by
+# `-n`/`--namespace`; a values-file namespace silently wins over `-n`, so a
+# rehearsal with a test `-n` would write into the REAL live namespace.
 name: hermes-mcp-admin
 
 # The instance is parked at 0 replicas and must stay there: the endpoint
